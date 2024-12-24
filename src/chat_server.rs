@@ -5,8 +5,9 @@ use rustafarian_shared::assembler::disassembler::Disassembler;
 use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerResponseWrapper};
 use rustafarian_shared::topology::Topology;
 use wg_2024::config::Client;
-use wg_2024::network::NodeId;
-use wg_2024::packet::{FloodResponse, Fragment, Packet, PacketType};
+use wg_2024::network::{NodeId, SourceRoutingHeader};
+use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NodeType, Packet, PacketType};
+use wg_2024::packet::PacketType::FloodRequest;
 
 #[derive()]
 /// Server used to send messages between clients
@@ -79,8 +80,12 @@ impl ChatServer {
             }
             PacketType::Ack(_) => {}
             PacketType::Nack(_) => {}
-            PacketType::FloodRequest(_) => {}
-            PacketType::FloodResponse(_) => {}
+            PacketType::FloodRequest(flood_request) => {
+                self.handle_flood_request(packet, flood_request);
+            }
+            PacketType::FloodResponse(flood_response) => {
+                self.handle_flood_response(flood_response);
+            }
         }
     }
 
@@ -89,7 +94,56 @@ impl ChatServer {
 
     }
 
-    /// Function that handles the reception of a flood response message, updating the topology.
+    /// Method that handles the reception of a flood_request, currently update the path trace
+    /// and forwards it to the other neighbours
+    ///
+    /// # Args
+    /// * `packet: Packet`: the original packet received by the server, used to get information
+    /// like session_id
+    /// * `flood_request: FloodRequest`: received flood_request, will be updated and forwarded to
+    /// neighbours
+    fn handle_flood_request(&mut self, packet: Packet, mut flood_request: FloodRequest) {
+
+        // CASE 1 - Forward the flood request
+        // Get the node that sent the request, so to avoid sending the request back to it
+        let sender_node = flood_request.path_trace.last().unwrap();
+        flood_request.increment(self.id, NodeType::Server);
+
+        // Create a new packet and forward it to all the neighbours, except the sender node
+        let new_flood_request = Packet::new_flood_request(
+            SourceRoutingHeader::empty_route(),
+            packet.session_id,
+            flood_request
+        );
+
+        for (id, sender) in self.node_senders {
+            if id != sender_node.0 {
+                sender.send(new_flood_request.clone()).unwrap()
+            }
+        }
+
+        // CASE 2 - Terminate the flood, create a flood response
+        // let sender_node = flood_request.path_trace.last().unwrap();
+        // flood_request.increment(self.id, NodeType::Server);
+        //
+        // // Get the reverse path, from the server to the initiator
+        // let mut route: Vec<u8> = flood_request.path_trace.iter().map(|node| node.0).collect();
+        // route.reverse();
+        //
+        // let flood_response = Packet::new_flood_response(
+        //     SourceRoutingHeader::new(route, 1),
+        //     packet.session_id,
+        //     FloodResponse {
+        //         flood_id: flood_request.flood_id,
+        //         path_trace: flood_request.path_trace
+        //     }
+        // );
+        //
+        // // Send it back to the node that sent the flood_request
+        // self.node_senders.get(sender_node).unwrap().send(flood_response).unwrap();
+    }
+
+    /// Method that handles the reception of a flood response message, updating the topology.
     ///
     /// # Args
     /// * `flood_response: FloodResponse`: the flood response received by the server
