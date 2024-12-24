@@ -7,7 +7,6 @@ use rustafarian_shared::topology::Topology;
 use wg_2024::config::Client;
 use wg_2024::network::{NodeId, SourceRoutingHeader};
 use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NodeType, Packet, PacketType};
-use wg_2024::packet::PacketType::FloodRequest;
 
 #[derive()]
 /// Server used to send messages between clients
