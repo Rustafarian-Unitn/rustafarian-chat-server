@@ -7,6 +7,13 @@ use rustafarian_shared::topology::Topology;
 use wg_2024::config::Client;
 use wg_2024::network::{NodeId, SourceRoutingHeader};
 use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NodeType, Packet, PacketType};
+use crate::chat_server::LogLevel::{DEBUG, ERROR, INFO};
+
+/// Used in the log method
+/// * `INFO`: default log level, will always be printed
+/// * `DEBUG`: used only in debug situation, will not print if the debug flag is `false`
+/// * `ERROR`: will print the message to `io::stderr`
+enum LogLevel { INFO, DEBUG, ERROR }
 
 #[derive()]
 /// Server used to send messages between clients
@@ -29,6 +36,7 @@ pub struct ChatServer {
     topology: Topology,
     assembler: Assembler,
     disassembler: Disassembler,
+    debug: bool // Debug flag, if true print verbose info
 }
 
 impl ChatServer {
@@ -39,6 +47,7 @@ impl ChatServer {
         sim_controller_send: Sender<SimControllerResponseWrapper>, // SER -> SIM
         server_recv: Receiver<Packet>, // DRONES -> SER
         node_senders: HashMap<NodeId, Sender<Packet>>, // SER -> DRONES
+        debug: bool
     ) -> Self {
         ChatServer{
             id,
@@ -49,29 +58,36 @@ impl ChatServer {
             registered_clients: HashMap::new(),
             topology: Topology::new(),
             assembler: Assembler::new(),
-            disassembler: Disassembler::new()
+            disassembler: Disassembler::new(),
+            debug
         }
     }
 
     /// Handle incoming commands from simulation controller
-    fn handle_controller_commands(&mut self, command: Result<SimControllerCommand, RecvError>) {
+    pub fn handle_controller_commands(&mut self, command: Result<SimControllerCommand, RecvError>) {
 
     }
 
     /// Handle incoming messages
-    fn handle_received_packet(&mut self, packet: Result<Packet, RecvError>) {
+    pub fn handle_received_packet(&mut self, packet: Result<Packet, RecvError>) {
 
         // Handle error while receiving packet
         if packet.is_err() {
-            eprintln!(
+            let log_msg = format!(
                 "Error in the reception of the packet for the chat server with id {} - packet error: {}",
                 self.id,
                 packet.err().unwrap()
             );
+            self.log(log_msg.as_str(), ERROR);
             return;
         }
 
         let mut packet = packet.unwrap();
+        self.log(
+            format!("<- Received new packet of type {}", packet.pack_type).as_str(),
+            DEBUG
+        );
+
         match packet.pack_type.clone() {
 
             PacketType::MsgFragment(fragment) => {
@@ -91,6 +107,10 @@ impl ChatServer {
 
     fn handle_message_fragment(&mut self, packet: Packet, fragment: Fragment) {
 
+        // Reassemble message fragment, if a complete message is formed handle it
+        if let Some(message) = self.assembler.add_fragment(fragment, packet.session_id) {
+        }
+        // TODO Send ACK for fragment
     }
 
     /// Method that handles the reception of a flood_request, currently update the path trace
@@ -105,7 +125,8 @@ impl ChatServer {
 
         // CASE 1 - Forward the flood request
         // Get the node that sent the request, so to avoid sending the request back to it
-        let sender_node = flood_request.path_trace.last().unwrap();
+        let sender_id = flood_request.path_trace.last().unwrap().0;
+        self.log(format!("<- Flood request received from node {}", sender_id).as_str(), INFO);
         flood_request.increment(self.id, NodeType::Server);
 
         // Create a new packet and forward it to all the neighbours, except the sender node
@@ -115,14 +136,29 @@ impl ChatServer {
             flood_request
         );
 
-        for (id, sender) in self.node_senders {
-            if id != sender_node.0 {
-                sender.send(new_flood_request.clone()).unwrap()
+        for (id, sender) in &self.node_senders {
+            if *id != sender_id {
+                match sender.send(new_flood_request.clone()) {
+
+                    Ok(_) => {
+                        self.log(
+                            format!("-> Flood request correctly forwarded to node {}", id).as_str(),
+                            DEBUG
+                        );
+                    }
+                    Err(e) => {
+                        self.log(
+                            format!("An error occurred while sending a flood request - [{}]", e).as_str(),
+                            ERROR
+                        );
+                    }
+                };
             }
         }
 
         // CASE 2 - Terminate the flood, create a flood response
-        // let sender_node = flood_request.path_trace.last().unwrap();
+        // let sender_id = flood_request.path_trace.last().unwrap().0;
+        // self.log(format!("<- Flood request received from node {}", sender_id).as_str(), INFO);
         // flood_request.increment(self.id, NodeType::Server);
         //
         // // Get the reverse path, from the server to the initiator
@@ -139,7 +175,11 @@ impl ChatServer {
         // );
         //
         // // Send it back to the node that sent the flood_request
-        // self.node_senders.get(sender_node).unwrap().send(flood_response).unwrap();
+        // self.log(
+        //     format!("-> Flood response sent to node {}", sender_id).as_str(),
+        //     DEBUG
+        // );
+        // self.node_senders.get(&sender_id).unwrap().send(flood_response).unwrap();
     }
 
     /// Method that handles the reception of a flood response message, updating the topology.
@@ -148,10 +188,13 @@ impl ChatServer {
     /// * `flood_response: FloodResponse`: the flood response received by the server
     fn handle_flood_response(&mut self, flood_response: FloodResponse) {
 
+        self.log("<- New flood response received, updating topology", INFO);
+
         for (i, node) in flood_response.path_trace.iter().enumerate() {
 
             // Check if node is already in the topology, if not add it
             if !self.topology.nodes().contains(&node.0) {
+                self.log(format!("New node ({}) added to the list", node.0).as_str(), DEBUG);
                 self.topology.add_node(node.0);
             }
 
@@ -167,9 +210,46 @@ impl ChatServer {
                     .unwrap()
                     .contains(&previous_node.0) {
 
+                    self.log(
+                        format!(
+                            "Adding new edge between nodes {} and {}",
+                            node.0,
+                            previous_node.0
+                        ).as_str(),
+                        DEBUG
+                    );
                     self.topology.add_edge(node.0, previous_node.0);
                     self.topology.add_edge(previous_node.0, node.0);
                 }
+            }
+        }
+    }
+
+
+    /// Utility method used to cleanly log information, differentiating on three different levels
+    ///
+    /// # Args
+    /// * `log_message: &str`: the message to log
+    /// * `log_level: LogLevel`: the level of the log:
+    ///     * `INFO`: default log level, will always be printed
+    ///     * `DEBUG`: used only in debug situation, will not print if the debug flag is `false`
+    ///     * `ERROR`: will print the message to `io::stderr`
+    fn log(&self, log_message: &str, log_level: LogLevel) {
+
+        match log_level {
+            INFO => {
+                print!("LEVEL: INFO >>> [Chat Server {}] - ", self.id);
+                println!("{}", log_message);
+            }
+            DEBUG => {
+                if self.debug {
+                    print!("LEVEL: DEBUG >>> [Chat Server {}] - ", self.id);
+                    println!("{}", log_message);
+                }
+            }
+            ERROR => {
+                eprint!("LEVEL: ERROR >>> [Chat Server {}] - ", self.id);
+                eprintln!("{}", log_message);
             }
         }
     }
@@ -179,15 +259,14 @@ impl ChatServer {
     fn run(&mut self) {
         loop {
             select_biased! {
-
                 // Handle commands from the simulation controller
                 recv(self.sim_controller_recv) -> command => {
-
+                    self.handle_controller_commands(command)
                 }
 
                 // Handle packets from adjacent drones
                 recv(self.server_recv) -> packet => {
-
+                    self.handle_received_packet(packet);
                 }
             }
         }
