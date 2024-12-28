@@ -59,6 +59,7 @@ impl ChatServer {
             server_recv,
             node_senders,
             registered_clients: HashMap::new(),
+            fragment_sent: HashMap::new(),
             topology: Topology::new(),
             assembler: Assembler::new(),
             disassembler: Disassembler::new(),
@@ -85,7 +86,7 @@ impl ChatServer {
             return;
         }
 
-        let mut packet = packet.unwrap();
+        let packet = packet.unwrap();
         self.log(
             format!("<- Received new packet of type {}", packet.pack_type).as_str(),
             DEBUG
@@ -272,7 +273,7 @@ impl ChatServer {
         let packet_type = packet.pack_type.clone();
         let session_id = packet.session_id.clone();
 
-        if let PacketType::MsgFragment(fragment) =  packet_type.clone() {
+        if let PacketType::MsgFragment(_) =  packet_type.clone() {
             self.fragment_sent.entry(session_id)
                 .or_insert_with(Vec::new)
                 .push(packet.clone());
@@ -323,6 +324,8 @@ impl ChatServer {
             None => { self.log(format!("No node found with id {}", node_id).as_str(), ERROR); }
         }
     }
+
+    pub fn topology(&mut self) -> &Topology { &self.topology }
 
     /// Run the server, listening for incoming commands from the simulation controller or incoming
     /// packets from the adjacent drones

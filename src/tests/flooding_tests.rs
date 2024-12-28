@@ -2,10 +2,10 @@
 pub mod flooding_tests {
     use std::collections::HashMap;
     use crossbeam_channel::{unbounded, Receiver, Sender};
-    use rand::{random, Rng};
+    use rand::{Rng};
     use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerResponseWrapper};
     use wg_2024::network::{NodeId, SourceRoutingHeader};
-    use wg_2024::packet::{FloodRequest, Packet, PacketType};
+    use wg_2024::packet::{FloodRequest, FloodResponse, Packet, PacketType};
     use wg_2024::packet::NodeType::{Client, Drone, Server};
     use crate::chat_server::ChatServer;
 
@@ -88,5 +88,49 @@ pub mod flooding_tests {
             }
             _ => { !panic!("Unexpected packet type"); }
         }
+    }
+
+    #[test]
+    fn should_handle_flood_response() {
+
+        let mut rng = rand::thread_rng();
+        let (mut server, recv2, recv3) = init_test_network();
+        let session_id: u64 = rng.gen();
+
+        let flood_id: u64 = rng.gen();
+        let flood_request = FloodRequest {
+            flood_id,
+            initiator_id: 8,
+            path_trace: vec![(3, Drone), (7, Drone), (8, Client)],
+        };
+
+        let mut route: Vec<u8> = flood_request.path_trace
+            .iter()
+            .map(|node| node.0)
+            .collect();
+        route.reverse();
+
+        let flood_response = Packet::new_flood_response(
+            SourceRoutingHeader::new(route, 1),
+            session_id,
+            FloodResponse {
+                flood_id,
+                path_trace: flood_request.path_trace
+            }
+        );
+
+        server.handle_received_packet(Ok(flood_response));
+
+        // Assert the topology is correctly updated
+        // NODES
+        assert!(server.topology().nodes().contains(&3));
+        assert!(server.topology().nodes().contains(&7));
+        assert!(server.topology().nodes().contains(&8));
+
+        // EDGES
+        assert!(server.topology().edges().get(&3).unwrap().contains(&7));
+        assert!(server.topology().edges().get(&7).unwrap().contains(&3));
+        assert!(server.topology().edges().get(&7).unwrap().contains(&8));
+        assert!(server.topology().edges().get(&8).unwrap().contains(&7));
     }
 }
