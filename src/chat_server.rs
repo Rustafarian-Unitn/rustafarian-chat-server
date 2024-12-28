@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use crossbeam_channel::{select_biased, Receiver, RecvError, Sender};
 use rustafarian_shared::assembler::assembler::Assembler;
 use rustafarian_shared::assembler::disassembler::Disassembler;
-use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerResponseWrapper};
+use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerResponseWrapper};
 use rustafarian_shared::topology::Topology;
 use wg_2024::config::Client;
 use wg_2024::network::{NodeId, SourceRoutingHeader};
@@ -32,6 +32,9 @@ pub struct ChatServer {
 
     // List of registered clients
     registered_clients: HashMap<NodeId, Client>,
+
+    // HashMap containing a session as a key, and a vector of the packet sent for that session
+    fragment_sent: HashMap<u64, Vec<Packet>>,
 
     topology: Topology,
     assembler: Assembler,
@@ -251,6 +254,73 @@ impl ChatServer {
                 eprint!("LEVEL: ERROR >>> [Chat Server {}] - ", self.id);
                 eprintln!("{}", log_message);
             }
+        }
+    }
+
+
+    /// Method that sends a packet
+    ///
+    /// # Args
+    /// * `packet: Packet`: the packet to send along the network
+    fn send_packet(&mut self, packet: Packet) {
+
+        self.log(
+            format!("-> Sending a new packet with session {}", packet.session_id).as_str(),
+            INFO
+        );
+        // If the packet is a MsgFragment, then add it to the list of sent fragment
+        let packet_type = packet.pack_type.clone();
+        let session_id = packet.session_id.clone();
+
+        if let PacketType::MsgFragment(fragment) =  packet_type.clone() {
+            self.fragment_sent.entry(session_id)
+                .or_insert_with(Vec::new)
+                .push(packet.clone());
+        }
+
+        // Send the packet to the first node in the route, and handle different outcomes
+        let node_id = packet.routing_header.hops[1];
+
+        match self.node_senders.get(&node_id) {
+
+            Some(node) => {
+                match node.send(packet) {
+
+                    Ok(_) => {
+                        self.log(
+                            format!(
+                                "-> Packet with session {} sent correctly to node {}",
+                                session_id,
+                                node_id
+                            ).as_str(),
+                            DEBUG
+                        );
+
+                        // If packet sent correctly notify Simulation Controller
+                        self.sim_controller_send.send(
+                            SimControllerResponseWrapper::Event(
+                                SimControllerEvent::PacketSent {
+                                    session_id,
+                                    packet_type: packet_type.to_string()
+                                }
+                            )
+                        ).unwrap()
+                    }
+
+                    Err(e) => {
+                        self.log(
+                            format!(
+                                "An error occurred while sending a packet - [Session Id: {}, Error: {}]",
+                                session_id,
+                                e
+                            ).as_str(),
+                            ERROR
+                        );
+                    }
+                }
+            }
+
+            None => { self.log(format!("No node found with id {}", node_id).as_str(), ERROR); }
         }
     }
 
