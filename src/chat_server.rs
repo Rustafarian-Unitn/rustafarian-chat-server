@@ -3,10 +3,11 @@ use crossbeam_channel::{select_biased, Receiver, RecvError, Sender};
 use rustafarian_shared::assembler::assembler::Assembler;
 use rustafarian_shared::assembler::disassembler::Disassembler;
 use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerResponseWrapper};
-use rustafarian_shared::topology::Topology;
+use rustafarian_shared::topology::{compute_route, Topology};
 use wg_2024::config::Client;
 use wg_2024::network::{NodeId, SourceRoutingHeader};
 use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NodeType, Packet, PacketType};
+use log::error;
 use crate::chat_server::LogLevel::{DEBUG, ERROR, INFO};
 
 /// Used in the log method
@@ -109,12 +110,38 @@ impl ChatServer {
     }
 
 
+    /// Method that handles a message fragments, try and form a complete message and sends an ACK
+    /// back to the sender
+    ///
+    /// # Args
+    /// * `packet: Packet`: the packet containing the fragment, used to gather information like
+    /// the sender id
+    /// * `fragment: Fragment`: the actual fragment, used to reconstruct a complete message
     fn handle_message_fragment(&mut self, packet: Packet, fragment: Fragment) {
 
+        let session_id = packet.session_id.clone();
+        let fragment_id = fragment.fragment_index.clone();
+        let sender_id = packet.routing_header.hops[0];
+
+        self.log(
+            format!(
+                "<- New message fragment received - [Node: {}, Session: {}, Fragment: {}]",
+                sender_id,
+                session_id,
+                fragment_id
+            ).as_str(),
+            INFO
+        );
+
         // Reassemble message fragment, if a complete message is formed handle it
-        if let Some(message) = self.assembler.add_fragment(fragment, packet.session_id) {
+        if let Some(message) = self.assembler.add_fragment(fragment, session_id) {
+
+            self.log(format!("A complete message was formed: {:?}", message).as_str(), DEBUG);
+            // TODO Implement
         }
-        // TODO Send ACK for fragment
+
+        // Send ACK to the sender
+        self.send_ack(sender_id, fragment_id, session_id);
     }
 
     /// Method that handles the reception of a flood_request, currently update the path trace
@@ -194,6 +221,7 @@ impl ChatServer {
 
         self.log("<- New flood response received, updating topology", INFO);
 
+        // TODO Could use update_topology method
         for (i, node) in flood_response.path_trace.iter().enumerate() {
 
             // Check if node is already in the topology, if not add it
@@ -229,36 +257,6 @@ impl ChatServer {
         }
     }
 
-
-    /// Utility method used to cleanly log information, differentiating on three different levels
-    ///
-    /// # Args
-    /// * `log_message: &str`: the message to log
-    /// * `log_level: LogLevel`: the level of the log:
-    ///     * `INFO`: default log level, will always be printed
-    ///     * `DEBUG`: used only in debug situation, will not print if the debug flag is `false`
-    ///     * `ERROR`: will print the message to `io::stderr`
-    fn log(&self, log_message: &str, log_level: LogLevel) {
-
-        match log_level {
-            INFO => {
-                print!("LEVEL: INFO >>> [Chat Server {}] - ", self.id);
-                println!("{}", log_message);
-            }
-            DEBUG => {
-                if self.debug {
-                    print!("LEVEL: DEBUG >>> [Chat Server {}] - ", self.id);
-                    println!("{}", log_message);
-                }
-            }
-            ERROR => {
-                eprint!("LEVEL: ERROR >>> [Chat Server {}] - ", self.id);
-                eprintln!("{}", log_message);
-            }
-        }
-    }
-
-
     /// Method that sends a packet
     ///
     /// # Args
@@ -279,6 +277,12 @@ impl ChatServer {
                 .push(packet.clone());
         }
 
+        // If packet has empty route, abort
+        if packet.routing_header.hops.is_empty() {
+            self.log("Packet has an empty route, abort sending!", ERROR);
+            return
+        }
+
         // Send the packet to the first node in the route, and handle different outcomes
         let node_id = packet.routing_header.hops[1];
 
@@ -294,7 +298,7 @@ impl ChatServer {
                                 session_id,
                                 node_id
                             ).as_str(),
-                            DEBUG
+                            INFO
                         );
 
                         // If packet sent correctly notify Simulation Controller
@@ -325,7 +329,63 @@ impl ChatServer {
         }
     }
 
-    pub fn topology(&mut self) -> &Topology { &self.topology }
+    /// Method that sends an ACK for a given fragment in a given session, using the `send_packet`
+    /// method, to a specific node.
+    ///
+    /// # Args
+    /// * `destination_node: NodeId`: the selected destination node, used to compute the path
+    /// * `fragment_id: u64`: the id of the fragment the ACK refers to
+    /// * `session_id: u64`: the current session the fragment belongs to
+    fn send_ack(&mut self, destination_node: NodeId, fragment_id: u64, session_id: u64) {
+
+        self.log(
+            format!(
+                "-> Sending an ACK to node {} for fragment {}",
+                destination_node,
+                fragment_id
+            ).as_str(),
+            INFO
+        );
+
+        // Create a new routing header and compute route
+        let mut routing_header = SourceRoutingHeader::initialize(
+            compute_route(&self.topology, self.id, destination_node)
+        );
+        routing_header.increase_hop_index();
+        self.log(format!("Route for ACK computed: {:?}", routing_header.hops).as_str(), DEBUG);
+
+        // Create a new packet and send it
+        let packet = Packet::new_ack(routing_header, session_id, fragment_id);
+        self.send_packet(packet);
+    }
+
+    /// Utility method used to cleanly log information, differentiating on three different levels
+    ///
+    /// # Args
+    /// * `log_message: &str`: the message to log
+    /// * `log_level: LogLevel`: the level of the log:
+    ///     * `INFO`: default log level, will always be printed
+    ///     * `DEBUG`: used only in debug situation, will not print if the debug flag is `false`
+    ///     * `ERROR`: will print the message to `io::stderr`
+    fn log(&self, log_message: &str, log_level: LogLevel) {
+
+        match log_level {
+            INFO => {
+                print!("LEVEL: INFO >>> [Chat Server {}] - ", self.id);
+                println!("{}", log_message);
+            }
+            DEBUG => {
+                if self.debug {
+                    print!("LEVEL: DEBUG >>> [Chat Server {}] - ", self.id);
+                    println!("{}", log_message);
+                }
+            }
+            ERROR => {
+                eprint!("LEVEL: ERROR >>> [Chat Server {}] - ", self.id);
+                eprintln!("{}", log_message);
+            }
+        }
+    }
 
     /// Run the server, listening for incoming commands from the simulation controller or incoming
     /// packets from the adjacent drones
@@ -341,6 +401,32 @@ impl ChatServer {
                 recv(self.server_recv) -> packet => {
                     self.handle_received_packet(packet);
                 }
+            }
+        }
+    }
+
+    // GETTERS AND SETTERS
+    pub fn topology(&self) -> &Topology { &self.topology }
+
+    /// Utility method that updates the current topology of the server,
+    /// adding the `nodes` and `edges`
+    ///
+    /// # Args
+    /// * `nodes: Vec<NodeId>`: vector of nodes to add to the topology
+    /// * `edges: Vec<(NodeId, NodeId)>`: vector of edges to add to the topology,
+    /// both from the first node to the second and vice versa
+    pub fn update_topology(&mut self, nodes: Vec<NodeId>, edges: Vec<(NodeId, NodeId)>) {
+
+        // Ad node to node list if not there
+        for node in nodes {
+            if !self.topology.nodes().contains(&node) { self.topology.add_node(node); }
+        }
+
+        // Add edges between the two nodes, if not exists
+        for edge in edges {
+            if !self.topology.edges().get(&edge.0).unwrap().contains(&edge.1) {
+                self.topology.add_edge(edge.0, edge.1);
+                self.topology.add_edge(edge.1, edge.0);
             }
         }
     }

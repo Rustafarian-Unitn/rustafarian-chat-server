@@ -101,7 +101,7 @@ pub mod flooding_tests {
         let flood_request = FloodRequest {
             flood_id,
             initiator_id: 8,
-            path_trace: vec![(3, Drone), (7, Drone), (8, Client)],
+            path_trace: vec![(1, Server), (3, Drone), (7, Drone), (8, Client)],
         };
 
         let mut route: Vec<u8> = flood_request.path_trace
@@ -111,7 +111,7 @@ pub mod flooding_tests {
         route.reverse();
 
         let flood_response = Packet::new_flood_response(
-            SourceRoutingHeader::new(route, 1),
+            SourceRoutingHeader::new(route, 3),
             session_id,
             FloodResponse {
                 flood_id,
