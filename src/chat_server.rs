@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use crossbeam_channel::{select_biased, Receiver, RecvError, Sender};
+use crossbeam_channel::{select_biased, Receiver, RecvError, SendError, Sender};
+use rand::Rng;
 use rustafarian_shared::assembler::assembler::Assembler;
 use rustafarian_shared::assembler::disassembler::Disassembler;
 use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerResponseWrapper};
@@ -37,10 +38,16 @@ pub struct ChatServer {
 
     // HashMap containing a session as a key, and a vector of the packet sent for that session
     fragment_sent: HashMap<u64, Vec<Packet>>,
+    // Set containing tuple of (session_id, fragment_id) that the server must retry to send
+    fragment_retry_queue: HashSet<(u64, u64)>,
 
     topology: Topology,
     assembler: Assembler,
     disassembler: Disassembler,
+    current_flood_id: u64,
+    // Flag to identify if a flood is currently in progress, is set to false once a flood response
+    // is received. Used to mitigate network load
+    is_flooding: bool,
     debug: bool // Debug flag, if true print verbose info
 }
 
@@ -62,9 +69,12 @@ impl ChatServer {
             node_senders,
             registered_clients: HashSet::new(),
             fragment_sent: HashMap::new(),
+            fragment_retry_queue: HashSet::new(),
             topology: Topology::new(),
             assembler: Assembler::new(),
             disassembler: Disassembler::new(),
+            current_flood_id: 0,
+            is_flooding: false,
             debug
         }
     }
@@ -80,7 +90,7 @@ impl ChatServer {
         // Handle error while receiving packet
         if packet.is_err() {
             let log_msg = format!(
-                "Error in the reception of the packet for the chat server with id {} - packet error: {}",
+                "Error in the reception of the packet for the chat server with id [{}] - packet error: [{}]",
                 self.id,
                 packet.err().unwrap()
             );
@@ -90,7 +100,7 @@ impl ChatServer {
 
         let packet = packet.unwrap();
         self.log(
-            format!("<- Received new packet of type {}", packet.pack_type).as_str(),
+            format!("<- Received new packet of type [{}]", packet.pack_type).as_str(),
             DEBUG
         );
 
@@ -102,7 +112,9 @@ impl ChatServer {
             PacketType::Ack(ack) => {
                 self.handle_ack(packet, ack);
             }
-            PacketType::Nack(nack) => {}
+            PacketType::Nack(nack) => {
+                self.handle_nack(packet, nack)
+            }
             PacketType::FloodRequest(flood_request) => {
                 self.handle_flood_request(packet, flood_request);
             }
@@ -111,7 +123,6 @@ impl ChatServer {
             }
         }
     }
-
 
     /// Method that handles a message fragments, try and form a complete message and sends an ACK
     /// back to the sender
@@ -143,7 +154,7 @@ impl ChatServer {
         if let Some(message) = self.assembler.add_fragment(fragment, session_id) {
 
             let message = String::from_utf8_lossy(&message).to_string();
-            self.log(format!("A complete message was formed: {}", message).as_str(), DEBUG);
+            self.log(format!("A complete message was formed: [{}]", message).as_str(), DEBUG);
             self.handle_complete_message(message, session_id, sender_id);
         }
     }
@@ -160,7 +171,7 @@ impl ChatServer {
         let fragment_id = ack.fragment_index;
         let sender_id = packet.routing_header.hops[0];
 
-        self.log(format!("Received ACK from node {}", sender_id).as_str(), INFO);
+        self.log(format!("Received ACK from node [{}]", sender_id).as_str(), INFO);
 
         // If there are fragments for the current session
         if let Some(fragments) = self.fragment_sent.get_mut(&session_id) {
@@ -185,7 +196,33 @@ impl ChatServer {
         }
     }
 
-    fn handle_nack(&mut self,  packet: Packet, nack: Nack) {}
+    /// Handle a NACK, adding the nacked fragment to a list in order to retry later
+    ///
+    /// # Args
+    /// * `packet: Packet` - the packet containing the NACK, used to gather information like
+    /// the sender id
+    /// * `nack: Nacl` - the NACK containing the fragment id
+    fn handle_nack(&mut self,  packet: Packet, nack: Nack) {
+
+        let session_id = packet.session_id.clone();
+        let fragment_id = nack.fragment_index;
+        let nack_type = nack.nack_type;
+        let sender_id = packet.routing_header.hops[0];
+
+        self.log(
+            format!("Received NACK from node [{}], nack type [{:?}]", sender_id, nack_type)
+                .as_str(),
+            INFO
+        );
+
+        // Add tuple to list in order to retry and send the fragment
+        self.fragment_retry_queue.insert((session_id, fragment_id));
+
+        // If no flood is currently in process, start a new one to update the topology
+        if !self.is_flooding {
+            // TODO Start new flood
+        }
+    }
 
     /// Method that handles the reception of a flood_request, currently update the path trace
     /// and forwards it to the other neighbours
@@ -200,7 +237,7 @@ impl ChatServer {
         // CASE 1 - Forward the flood request
         // Get the node that sent the request, so to avoid sending the request back to it
         let sender_id = flood_request.path_trace.last().unwrap().0;
-        self.log(format!("<- Flood request received from node {}", sender_id).as_str(), INFO);
+        self.log(format!("<- Flood request received from node [{}]", sender_id).as_str(), INFO);
         flood_request.increment(self.id, NodeType::Server);
 
         // Create a new packet and forward it to all the neighbours, except the sender node
@@ -216,7 +253,7 @@ impl ChatServer {
 
                     Ok(_) => {
                         self.log(
-                            format!("-> Flood request correctly forwarded to node {}", id).as_str(),
+                            format!("-> Flood request correctly forwarded to node [{}]", id).as_str(),
                             DEBUG
                         );
                     }
@@ -232,7 +269,7 @@ impl ChatServer {
 
         // CASE 2 - Terminate the flood, create a flood response
         // let sender_id = flood_request.path_trace.last().unwrap().0;
-        // self.log(format!("<- Flood request received from node {}", sender_id).as_str(), INFO);
+        // self.log(format!("<- Flood request received from node [{}]", sender_id).as_str(), INFO);
         // flood_request.increment(self.id, NodeType::Server);
         //
         // // Get the reverse path, from the server to the initiator
@@ -250,7 +287,7 @@ impl ChatServer {
         //
         // // Send it back to the node that sent the flood_request
         // self.log(
-        //     format!("-> Flood response sent to node {}", sender_id).as_str(),
+        //     format!("-> Flood response sent to node [{}]", sender_id).as_str(),
         //     DEBUG
         // );
         // self.node_senders.get(&sender_id).unwrap().send(flood_response).unwrap();
@@ -264,12 +301,22 @@ impl ChatServer {
 
         self.log("<- New flood response received, updating topology", INFO);
 
+        // Only handle flood responses if they have the current id, to avoid updating the topology
+        // with older information
+        if flood_response.flood_id != self.current_flood_id {
+            self.log(
+                "Received a flood response with a wrong id, ignoring it",
+                INFO
+            );
+            return;
+        }
+
         // TODO Could use update_topology method
         for (i, node) in flood_response.path_trace.iter().enumerate() {
 
             // Check if node is already in the topology, if not add it
             if !self.topology.nodes().contains(&node.0) {
-                self.log(format!("New node ({}) added to the list", node.0).as_str(), DEBUG);
+                self.log(format!("New node [{}] added to the list", node.0).as_str(), DEBUG);
                 self.topology.add_node(node.0);
             }
 
@@ -287,7 +334,7 @@ impl ChatServer {
 
                     self.log(
                         format!(
-                            "Adding new edge between nodes {} and {}",
+                            "Adding new edge between nodes [{}] and [{}]",
                             node.0,
                             previous_node.0
                         ).as_str(),
@@ -298,6 +345,8 @@ impl ChatServer {
                 }
             }
         }
+        // Change the current state to false, since we received at least one flood response
+        self.is_flooding = false;
     }
 
     /// Handle request from the clients
@@ -335,7 +384,7 @@ impl ChatServer {
                                 if node_id != destination_node {
                                     self.log(
                                         format!(
-                                            "Initiator id ({}) is not equal to the node id to register ({})",
+                                            "Initiator id [{}] is not equal to the node id to register [{}]",
                                             destination_node,
                                             node_id
                                         ).as_str(),
@@ -381,7 +430,7 @@ impl ChatServer {
     /// * `session_id: u64` - the session this message belongs to
     fn handle_client_list_request(&mut self, node_id: NodeId, session_id: u64) {
 
-        self.log(format!("<- Received request from {} to get client list", node_id).as_str(), INFO);
+        self.log(format!("<- Received request from [{}] to get client list", node_id).as_str(), INFO);
 
         let response = ChatResponseWrapper::Chat(
             ChatResponse::ClientList(self.registered_clients.clone().into_iter().collect())
@@ -396,7 +445,7 @@ impl ChatServer {
     /// * `session_id: u64` - the session this message belongs to
     fn handle_register_request(&mut self, node_id: NodeId, session_id: u64) {
 
-        self.log(format!("New client ({}) registered!", node_id).as_str(), INFO);
+        self.log(format!("New client [{}] registered!", node_id).as_str(), INFO);
         self.registered_clients.insert(node_id);
 
         // Send response once client is registered
@@ -423,7 +472,7 @@ impl ChatServer {
 
         self.log(
             format!(
-                "-> Sending a message from client {} to client {}",
+                "-> Sending a message from client [{}] to client [{}]",
                 sender_id,
                 receiver_id
             ).as_str(),
@@ -433,7 +482,7 @@ impl ChatServer {
         // TODO Should it check that the receiver is registered?
         // Sending message to receiver
         self.log(
-            format!("-> Sending message [{}] to receiver ({})", message, receiver_id).as_str(),
+            format!("-> Sending message [{}] to receiver [{}]", message, receiver_id).as_str(),
             DEBUG
         );
         let msg_response = ChatResponseWrapper::Chat(
@@ -444,7 +493,7 @@ impl ChatServer {
 
         // Sending confirmation to the sender that the message has been sent
         self.log(
-            format!("-> Confirming message sent succesfully to sender ({})", sender_id).as_str(),
+            format!("-> Confirming message sent successfully to sender [{}]", sender_id).as_str(),
             DEBUG
         );
         let msg_response = ChatResponseWrapper::Chat(
@@ -478,7 +527,7 @@ impl ChatServer {
     fn send_message(&mut self, message: String, destination_node: NodeId, session_id: u64) {
 
         self.log(
-            format!("-> Sending a new message to node {}", destination_node).as_str(),
+            format!("-> Sending a new message to node [{}]", destination_node).as_str(),
             INFO
         );
 
@@ -513,7 +562,7 @@ impl ChatServer {
     fn send_packet(&mut self, packet: Packet) {
 
         self.log(
-            format!("-> Sending a new packet with session {}", packet.session_id).as_str(),
+            format!("-> Sending a new packet with session [{}]", packet.session_id).as_str(),
             INFO
         );
         // If the packet is a MsgFragment, then add it to the list of sent fragment
@@ -543,7 +592,7 @@ impl ChatServer {
                     Ok(_) => {
                         self.log(
                             format!(
-                                "-> Packet with session {} sent correctly to node {}",
+                                "-> Packet with session [{}] sent correctly to node [{}]",
                                 session_id,
                                 node_id
                             ).as_str(),
@@ -574,7 +623,7 @@ impl ChatServer {
                 }
             }
 
-            None => { self.log(format!("No node found with id {}", node_id).as_str(), ERROR); }
+            None => { self.log(format!("No node found with id [{}]", node_id).as_str(), ERROR); }
         }
     }
 
@@ -589,7 +638,7 @@ impl ChatServer {
 
         self.log(
             format!(
-                "-> Sending an ACK to node {} for fragment {}",
+                "-> Sending an ACK to node [{}] for fragment [{}]",
                 destination_node,
                 fragment_id
             ).as_str(),
@@ -606,6 +655,134 @@ impl ChatServer {
         // Create a new packet and send it
         let packet = Packet::new_ack(routing_header, session_id, fragment_id);
         self.send_packet(packet);
+    }
+
+    /// Initiate a new flooding sequence, checking if the server is not waiting on a flood response
+    fn start_flooding(&mut self) {
+
+        self.log("Starting a new flooding", INFO);
+
+        // Check if server is waiting on an old flood
+        if self.is_flooding {
+            self.log("Server is already waiting on a flood", INFO);
+            return;
+        }
+
+        let mut rng = rand::thread_rng();
+        // Generate new random flood_id and set it as the current id in the server
+        self.current_flood_id = rng.gen();
+
+        // Create a flood_request to be sent to all the neighbours
+        let session_id: u64 = rng.gen();
+        let flood_request = Packet::new_flood_request(
+            SourceRoutingHeader::empty_route(),
+            session_id,
+            FloodRequest::new(self.current_flood_id, self.id)
+        );
+
+        for (id, sender) in self.node_senders.clone() {
+            match sender.send(flood_request.clone()) {
+                Ok(_) => {
+                    self.log(
+                      format!("Flood request correctly sent to node [{}]", id).as_str(),
+                      DEBUG
+                    );
+
+                    // Set the flag here, since if no flood_request is successfully sent, but
+                    // the flag is already set to true, than the server could starve waiting
+                    // for a flood_response
+                    self.is_flooding = true;
+                }
+                Err(e) => {
+                    self.log(
+                        format!(
+                            "Error while sending flood request to node [{}] - error [{}]",
+                            id,
+                            e
+                        ).as_str(),
+                        ERROR
+                    );
+                }
+            }
+        }
+    }
+
+    /// Method that try to resend each fragment in the fragment_retry_queue
+    fn resend_fragments(&mut self) {
+
+        self.log("Resending fragments in the fragment_retry_queue", DEBUG);
+
+        for (session_id, fragment_id) in self.fragment_retry_queue.clone() {
+
+            self.log(
+                format!("Handling fragment: [session: {} - fragment: {}]",
+                        session_id,
+                        fragment_id
+                ).as_str(),
+                DEBUG
+            );
+
+            // Remove the current tuple from the set
+            self.fragment_retry_queue.remove(&(session_id, fragment_id));
+
+            // Fetch information regarding the fragment from the server
+            // If there are fragments for the current session
+            if let Some(fragments) = self.fragment_sent.get_mut(&session_id) {
+
+                if let Some(packet) = fragments.iter().find(|&packet| {
+                    match &packet.pack_type {
+                        PacketType::MsgFragment(fragment) => {
+                            fragment.fragment_index == fragment_id
+                        }
+                        _ => false
+                    }
+                }) {
+
+                    // Compute new route, this way if a flood response has updated the topology
+                    // the packet should avoid the previous error
+                    let destination_id = packet.routing_header.destination().unwrap();
+                    let source_header = self.topology.get_routing_header(
+                        self.id,
+                        destination_id
+                    );
+
+                    // Fetch the fragment from the packet
+                    let PacketType::MsgFragment(fragment) = packet.clone().pack_type
+                        else {
+                            // Should never reach this code
+                            self.log(
+                                "Expecting MsgFragment, received wrong type in resend_fragments",
+                                ERROR
+                            );
+                            return;
+                        };
+
+                    // Create a new packet and send it
+                    let new_packet = Packet::new_fragment(
+                        source_header,
+                        session_id,
+                        fragment
+                    );
+
+                    self.send_packet(new_packet);
+                } else {
+                    // NO FRAGMENT FOUND
+                    self.log(
+                        format!("No fragment with id [{}] was found in session [{}]",
+                            fragment_id,
+                            session_id
+                        ).as_str(),
+                        ERROR
+                    );
+                }
+            } else {
+                // NO SESSION FOUND
+                self.log(
+                    format!("No session with id [{}] is registered", session_id).as_str(),
+                    ERROR
+                );
+            }
+        }
     }
 
     /// Utility method used to cleanly log information, differentiating on three different levels
@@ -651,6 +828,9 @@ impl ChatServer {
                     self.handle_received_packet(packet);
                 }
             }
+
+            // Resend fragment if any are present in the queue
+            if !self.fragment_retry_queue.is_empty() { self.resend_fragments(); }
         }
     }
 
@@ -683,4 +863,6 @@ impl ChatServer {
     pub fn registered_clients(&self) -> &HashSet<NodeId> { &self.registered_clients }
 
     pub fn fragment_sent(&self) -> &HashMap<u64, Vec<Packet>> { &self.fragment_sent }
+
+    pub fn is_flooding(&self) -> &bool { &self.is_flooding }
 }
