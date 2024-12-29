@@ -4,4 +4,5 @@ pub mod chat_server;
 mod tests {
     mod flooding_tests;
     mod message_tests;
+    mod ack_nack_tests;
 }

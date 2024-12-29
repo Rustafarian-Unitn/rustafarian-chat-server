@@ -147,10 +147,6 @@ pub mod message_test {
             3
         );
 
-        // Used later to check if the routing for the ACK is correct
-        let mut route = routing_header.hops.clone();
-        route.reverse();
-
         // Send fragments to the server
         for fragment in fragments {
             let packet = Packet::new_fragment(routing_header.clone(), session_id, fragment);
@@ -226,10 +222,6 @@ pub mod message_test {
             3
         );
 
-        // Used later to check if the routing for the ACK is correct
-        let mut route = routing_header.hops.clone();
-        route.reverse();
-
         // Send fragments to the server
         for fragment in fragments {
             let packet = Packet::new_fragment(routing_header.clone(), session_id, fragment);
@@ -299,10 +291,6 @@ pub mod message_test {
             vec![8, 7, 3, 1],
             3
         );
-
-        // Used later to check if the routing for the ACK is correct
-        let mut route = routing_header.hops.clone();
-        route.reverse();
 
         // Send fragments to the server
         for fragment in fragments {
@@ -399,10 +387,6 @@ pub mod message_test {
             vec![8, 6, 3, 1],
             3
         );
-
-        // Used later to check if the routing for the ACK is correct
-        let mut route = routing_header.hops.clone();
-        route.reverse();
 
         // Send fragments to the server
         for fragment in fragments {

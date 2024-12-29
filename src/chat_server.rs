@@ -5,8 +5,9 @@ use rustafarian_shared::assembler::disassembler::Disassembler;
 use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerResponseWrapper};
 use rustafarian_shared::topology::{compute_route, Topology};
 use wg_2024::network::{NodeId, SourceRoutingHeader};
-use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NodeType, Packet, PacketType};
+use wg_2024::packet::{Ack, FloodRequest, FloodResponse, Fragment, Nack, NodeType, Packet, PacketType};
 use rustafarian_shared::messages::chat_messages::{ChatRequest, ChatRequestWrapper, ChatResponse, ChatResponseWrapper};
+use rustafarian_shared::messages::commander_messages::SimControllerEvent::PacketReceived;
 use rustafarian_shared::messages::general_messages::{DroneSend, ServerType, ServerTypeResponse};
 use crate::chat_server::LogLevel::{DEBUG, ERROR, INFO};
 
@@ -98,8 +99,10 @@ impl ChatServer {
             PacketType::MsgFragment(fragment) => {
                 self.handle_message_fragment(packet, fragment)
             }
-            PacketType::Ack(_) => {}
-            PacketType::Nack(_) => {}
+            PacketType::Ack(ack) => {
+                self.handle_ack(packet, ack);
+            }
+            PacketType::Nack(nack) => {}
             PacketType::FloodRequest(flood_request) => {
                 self.handle_flood_request(packet, flood_request);
             }
@@ -144,6 +147,45 @@ impl ChatServer {
             self.handle_complete_message(message, session_id, sender_id);
         }
     }
+
+    /// Handle an ACK, removing the corresponding fragment from the list of fragment sent
+    ///
+    /// # Args
+    /// * `packet: Packet` - the packet containing the ACK, used to gather information like
+    /// the sender id
+    /// * `ack: Ack` - the ACK containing the fragment id
+    fn handle_ack(&mut self, packet: Packet, ack: Ack) {
+
+        let session_id = packet.session_id.clone();
+        let fragment_id = ack.fragment_index;
+        let sender_id = packet.routing_header.hops[0];
+
+        self.log(format!("Received ACK from node {}", sender_id).as_str(), INFO);
+
+        // If there are fragments for the current session
+        if let Some(fragments) = self.fragment_sent.get_mut(&session_id) {
+
+            // If there is a fragment for the current session with the right fragment id,
+            // then remove it
+            fragments.retain(|packet| {
+                match &packet.pack_type {
+                    PacketType::MsgFragment(fragment) => {
+                        fragment.fragment_index != fragment_id
+                    }
+                    _ => true
+                }
+            });
+
+            // Remove the session id from the list of fragment if all fragment have been correctly
+            // received
+            if fragments.is_empty() { self.fragment_sent.remove(&session_id); }
+        } else {
+            // NO SESSION FOUND
+            self.log(format!("No session with id [{}] is registered", session_id).as_str(), DEBUG);
+        }
+    }
+
+    fn handle_nack(&mut self,  packet: Packet, nack: Nack) {}
 
     /// Method that handles the reception of a flood_request, currently update the path trace
     /// and forwards it to the other neighbours
@@ -258,6 +300,13 @@ impl ChatServer {
         }
     }
 
+    /// Handle request from the clients
+    ///
+    /// # Args
+    /// * `message: String` - the message received from the client
+    /// * `session_id: u64` - the session of the current message
+    /// * `destination_node: NodeId` - the id of the client that sent the message, used to send the
+    /// response to
     fn handle_complete_message(
         &mut self,
         message: String,
@@ -632,4 +681,6 @@ impl ChatServer {
     }
 
     pub fn registered_clients(&self) -> &HashSet<NodeId> { &self.registered_clients }
+
+    pub fn fragment_sent(&self) -> &HashMap<u64, Vec<Packet>> { &self.fragment_sent }
 }
