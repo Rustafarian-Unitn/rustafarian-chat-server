@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fmt::format;
 use crossbeam_channel::{select_biased, Receiver, RecvError, Sender};
 use rustafarian_shared::assembler::assembler::Assembler;
 use rustafarian_shared::assembler::disassembler::Disassembler;
@@ -8,6 +9,8 @@ use wg_2024::config::Client;
 use wg_2024::network::{NodeId, SourceRoutingHeader};
 use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NodeType, Packet, PacketType};
 use log::error;
+use rustafarian_shared::messages::chat_messages::{ChatRequest, ChatRequestWrapper, ChatResponseWrapper};
+use rustafarian_shared::messages::general_messages::{DroneSend, ServerType, ServerTypeResponse};
 use crate::chat_server::LogLevel::{DEBUG, ERROR, INFO};
 
 /// Used in the log method
@@ -32,7 +35,7 @@ pub struct ChatServer {
     node_senders: HashMap<NodeId, Sender<Packet>>,
 
     // List of registered clients
-    registered_clients: HashMap<NodeId, Client>,
+    registered_clients: HashSet<NodeId>,
 
     // HashMap containing a session as a key, and a vector of the packet sent for that session
     fragment_sent: HashMap<u64, Vec<Packet>>,
@@ -59,7 +62,7 @@ impl ChatServer {
             sim_controller_send,
             server_recv,
             node_senders,
-            registered_clients: HashMap::new(),
+            registered_clients: HashSet::new(),
             fragment_sent: HashMap::new(),
             topology: Topology::new(),
             assembler: Assembler::new(),
@@ -114,9 +117,9 @@ impl ChatServer {
     /// back to the sender
     ///
     /// # Args
-    /// * `packet: Packet`: the packet containing the fragment, used to gather information like
+    /// * `packet: Packet` - the packet containing the fragment, used to gather information like
     /// the sender id
-    /// * `fragment: Fragment`: the actual fragment, used to reconstruct a complete message
+    /// * `fragment: Fragment` - the actual fragment, used to reconstruct a complete message
     fn handle_message_fragment(&mut self, packet: Packet, fragment: Fragment) {
 
         let session_id = packet.session_id.clone();
@@ -133,24 +136,25 @@ impl ChatServer {
             INFO
         );
 
+        // Send ACK to the sender
+        self.send_ack(sender_id, fragment_id, session_id);
+
         // Reassemble message fragment, if a complete message is formed handle it
         if let Some(message) = self.assembler.add_fragment(fragment, session_id) {
 
-            self.log(format!("A complete message was formed: {:?}", message).as_str(), DEBUG);
-            // TODO Implement
+            let message = String::from_utf8_lossy(&message).to_string();
+            self.log(format!("A complete message was formed: {}", message).as_str(), DEBUG);
+            self.handle_complete_message(message, session_id, sender_id);
         }
-
-        // Send ACK to the sender
-        self.send_ack(sender_id, fragment_id, session_id);
     }
 
     /// Method that handles the reception of a flood_request, currently update the path trace
     /// and forwards it to the other neighbours
     ///
     /// # Args
-    /// * `packet: Packet`: the original packet received by the server, used to get information
+    /// * `packet: Packet` - the original packet received by the server, used to get information
     /// like session_id
-    /// * `flood_request: FloodRequest`: received flood_request, will be updated and forwarded to
+    /// * `flood_request: FloodRequest` - received flood_request, will be updated and forwarded to
     /// neighbours
     fn handle_flood_request(&mut self, packet: Packet, mut flood_request: FloodRequest) {
 
@@ -216,7 +220,7 @@ impl ChatServer {
     /// Method that handles the reception of a flood response message, updating the topology.
     ///
     /// # Args
-    /// * `flood_response: FloodResponse`: the flood response received by the server
+    /// * `flood_response: FloodResponse` - the flood response received by the server
     fn handle_flood_response(&mut self, flood_response: FloodResponse) {
 
         self.log("<- New flood response received, updating topology", INFO);
@@ -257,10 +261,134 @@ impl ChatServer {
         }
     }
 
+    fn handle_complete_message(
+        &mut self,
+        message: String,
+        session_id: u64,
+        destination_node: NodeId
+    ) {
+
+        match ChatRequestWrapper::from_string(message) {
+
+            Ok(req_wrapper) => {
+
+                self.log("Successfully deserialized the message", DEBUG);
+                match req_wrapper {
+
+                    ChatRequestWrapper::Chat(request) => {
+                        
+                        match request {
+
+                            ChatRequest::ClientList => {
+                                self.handle_client_list_request()
+                            }
+                            ChatRequest::Register(node_id  ) => {
+
+                                // Check if the node to register is the same that initiated the
+                                // request, if not do nothing
+                                if node_id != destination_node {
+                                    self.log(
+                                        format!(
+                                            "Initiator id ({}) is not equal to the node id to register ({})",
+                                            destination_node,
+                                            node_id
+                                        ).as_str(),
+                                        ERROR
+                                    );
+                                    return;
+                                }
+
+                                self.handle_register_request(node_id);
+                            }
+                            ChatRequest::SendMessage { .. } => {
+                                self.handle_send_message_request()
+                            }
+                        }
+                    }
+                    ChatRequestWrapper::ServerType(_) => {
+                        self.handle_server_type_request(destination_node, session_id);
+                    }
+                }
+            }
+            Err(e) => {
+                self.log(
+                    format!("Error while deserializing message from string [{}]", e).as_str(),
+                    ERROR
+                )
+            }
+        }
+    }
+
+    fn handle_client_list_request(&self) {}
+
+    /// Register a client to the server
+    ///
+    /// # Args
+    /// * `node_id` - id of the client to register
+    fn handle_register_request(&mut self, node_id: NodeId) {
+
+        self.log(format!("New client ({}) registered!", node_id).as_str(), INFO);
+        self.registered_clients.insert(node_id);
+    }
+    fn handle_send_message_request(&self) {}
+
+    /// Handle a request from a chat client to obtain this server type
+    ///
+    /// # Args
+    /// * `destination_node: NodeId` - id of the client that made the request
+    /// * `session_id: u64` - the session this message belongs to
+    fn handle_server_type_request(&mut self, destination_node: NodeId, session_id: u64) {
+
+        self.log("Handling server type request", INFO);
+        let request = ChatResponseWrapper::ServerType(
+            ServerTypeResponse::ServerType(ServerType::Chat)
+        );
+        let request_json = request.stringify();
+
+        self.send_message(request_json, destination_node, session_id);
+    }
+
+    /// Send a new message to a destination, fragmenting it in smaller chunks using the disassembler
+    ///
+    /// # Args
+    /// * `message: String` - the message to be sent, still to be fragmented
+    /// * `destination_node: NodeId` - the destination to send the message to
+    /// * `session_id: u64` - the session this message belongs to
+    fn send_message(&mut self, message: String, destination_node: NodeId, session_id: u64) {
+
+        self.log(
+            format!("-> Sending a new message to node {}", destination_node).as_str(),
+            INFO
+        );
+
+        let fragments = self
+            .disassembler
+            .disassemble_message(message.as_bytes().to_vec(), session_id);
+
+        // Find the route to the destination node (the client that sent the request) and create
+        // the common header for all the fragments
+        let header = self.topology.get_routing_header(self.id, destination_node);
+        self.log(
+            format!(
+            "New header created - [Destination: {}, Route: {:?}]",
+            destination_node,
+            header.hops
+            ).as_str(),
+            DEBUG
+        );
+
+        // Send each fragment to the node, using send_packet method
+        for fragment in fragments {
+
+            let packet = Packet::new_fragment(header.clone(), session_id, fragment);
+            self.send_packet(packet);
+        }
+    }
+
     /// Method that sends a packet
     ///
     /// # Args
-    /// * `packet: Packet`: the packet to send along the network
+    /// * `packet: Packet` - the packet to send along the network
     fn send_packet(&mut self, packet: Packet) {
 
         self.log(
@@ -333,9 +461,9 @@ impl ChatServer {
     /// method, to a specific node.
     ///
     /// # Args
-    /// * `destination_node: NodeId`: the selected destination node, used to compute the path
-    /// * `fragment_id: u64`: the id of the fragment the ACK refers to
-    /// * `session_id: u64`: the current session the fragment belongs to
+    /// * `destination_node: NodeId` - the selected destination node, used to compute the path
+    /// * `fragment_id: u64` - the id of the fragment the ACK refers to
+    /// * `session_id: u64` - the current session the fragment belongs to
     fn send_ack(&mut self, destination_node: NodeId, fragment_id: u64, session_id: u64) {
 
         self.log(
@@ -362,8 +490,8 @@ impl ChatServer {
     /// Utility method used to cleanly log information, differentiating on three different levels
     ///
     /// # Args
-    /// * `log_message: &str`: the message to log
-    /// * `log_level: LogLevel`: the level of the log:
+    /// * `log_message: &str` - the message to log
+    /// * `log_level: LogLevel` - the level of the log:
     ///     * `INFO`: default log level, will always be printed
     ///     * `DEBUG`: used only in debug situation, will not print if the debug flag is `false`
     ///     * `ERROR`: will print the message to `io::stderr`
@@ -412,8 +540,8 @@ impl ChatServer {
     /// adding the `nodes` and `edges`
     ///
     /// # Args
-    /// * `nodes: Vec<NodeId>`: vector of nodes to add to the topology
-    /// * `edges: Vec<(NodeId, NodeId)>`: vector of edges to add to the topology,
+    /// * `nodes: Vec<NodeId>` - vector of nodes to add to the topology
+    /// * `edges: Vec<(NodeId, NodeId)>` - vector of edges to add to the topology,
     /// both from the first node to the second and vice versa
     pub fn update_topology(&mut self, nodes: Vec<NodeId>, edges: Vec<(NodeId, NodeId)>) {
 
@@ -430,4 +558,6 @@ impl ChatServer {
             }
         }
     }
+
+    pub fn registered_clients(&self) -> &HashSet<NodeId> { &self.registered_clients }
 }
