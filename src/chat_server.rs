@@ -297,8 +297,17 @@ impl ChatServer {
 
                                 self.handle_register_request(node_id, session_id);
                             }
-                            ChatRequest::SendMessage { .. } => {
-                                self.handle_send_message_request()
+                            ChatRequest::SendMessage {
+                                from: sender_id,
+                                to: receiver_id,
+                                message
+                            } => {
+                                self.handle_send_message_request(
+                                    sender_id,
+                                    receiver_id,
+                                    session_id,
+                                    message
+                                );
                             }
                         }
                     }
@@ -319,11 +328,11 @@ impl ChatServer {
     /// Send list of registered clients
     ///
     /// # Args
-    /// * `node_id` - id of the client that requested the list
+    /// * `node_id: NodeId` - id of the client that requested the list
     /// * `session_id: u64` - the session this message belongs to
     fn handle_client_list_request(&mut self, node_id: NodeId, session_id: u64) {
 
-        self.log(format!("Received request from {} to get client list", node_id).as_str(), INFO);
+        self.log(format!("<- Received request from {} to get client list", node_id).as_str(), INFO);
 
         let response = ChatResponseWrapper::Chat(
             ChatResponse::ClientList(self.registered_clients.clone().into_iter().collect())
@@ -334,7 +343,7 @@ impl ChatServer {
     /// Register a client to the server
     ///
     /// # Args
-    /// * `node_id` - id of the client to register
+    /// * `node_id: NodeId` - id of the client to register
     /// * `session_id: u64` - the session this message belongs to
     fn handle_register_request(&mut self, node_id: NodeId, session_id: u64) {
 
@@ -347,7 +356,53 @@ impl ChatServer {
         );
         self.send_message(response.stringify(), node_id, session_id);
     }
-    fn handle_send_message_request(&self) {}
+
+    /// Send a message from the sender to the receiver
+    ///
+    /// # Args
+    /// * `sender_id: NodeId` - id of the sending client
+    /// * `receiver_id: NodeId` - id of the receiving client
+    /// * `session_id: u64` - the session this message belongs to
+    /// * `message: String` - the message to send
+    fn handle_send_message_request(
+        &mut self,
+        sender_id: NodeId,
+        receiver_id: NodeId,
+        session_id: u64,
+        message: String
+    ) {
+
+        self.log(
+            format!(
+                "-> Sending a message from client {} to client {}",
+                sender_id,
+                receiver_id
+            ).as_str(),
+            INFO
+        );
+
+        // TODO Should it check that the receiver is registered?
+        // Sending message to receiver
+        self.log(
+            format!("-> Sending message [{}] to receiver ({})", message, receiver_id).as_str(),
+            DEBUG
+        );
+        let msg_response = ChatResponseWrapper::Chat(
+            ChatResponse::MessageFrom { from: sender_id, message: message.into_bytes() }
+        );
+        // TODO Should the session be the same one or a new one?
+        self.send_message(msg_response.stringify(), receiver_id, session_id);
+
+        // Sending confirmation to the sender that the message has been sent
+        self.log(
+            format!("-> Confirming message sent succesfully to sender ({})", sender_id).as_str(),
+            DEBUG
+        );
+        let msg_response = ChatResponseWrapper::Chat(
+            ChatResponse::MessageSent
+        );
+        self.send_message(msg_response.stringify(), sender_id, session_id);
+    }
 
     /// Handle a request from a chat client to obtain this server type
     ///

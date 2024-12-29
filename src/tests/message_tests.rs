@@ -117,6 +117,7 @@ pub mod message_test {
         }
     }
 
+    // SERVER FUNCTIONALITIES
     #[test]
     fn should_register_client() {
 
@@ -350,6 +351,125 @@ pub mod message_test {
                                             assert!(list.contains(&8));
                                         }
                                         _ => { !panic!("Unexpected request type, was expecting ClientList"); }
+                                    }
+                                }
+                                _ => { !panic!("Unexpected response type, expected ChatResponseWrapper::Chat"); }
+                            }
+                        }
+                        Err(_) => {
+                            !panic!("Something went wrong while parsing the request");
+                        }
+                    }
+                }
+            }
+            _ => { !panic!("Unexpected packet type, was expecting MsgFragment"); }
+        }
+    }
+
+    #[test]
+    fn should_send_message_to_client() {
+
+        let mut rng = rand::thread_rng();
+        let (
+            mut server,
+            recv2,
+            recv3,
+            sc_recv
+        ) = init_test_network();
+        let session_id: u64 = rng.gen();
+
+        // Add fake nodes to the topology, 8 and 9 are clients
+        server.update_topology(vec![6, 7, 8, 9], vec![(3, 6), (3, 7), (6, 8), (7, 9)]);
+
+        // Create a mock request and fragment it
+        let mut disassembler = Disassembler::new();
+        let message = "Test message".to_string();
+        let request = ChatRequestWrapper::Chat(ChatRequest::SendMessage {
+            from: 8,
+            to: 9,
+            message: message.clone(),
+        });
+        let fragments = disassembler.disassemble_message(
+            request.stringify().into_bytes(),
+            session_id
+        );
+
+        // Create a mock routing header for the packet, coming from the node 8
+        let routing_header = SourceRoutingHeader::new(
+            vec![8, 6, 3, 1],
+            3
+        );
+
+        // Used later to check if the routing for the ACK is correct
+        let mut route = routing_header.hops.clone();
+        route.reverse();
+
+        // Send fragments to the server
+        for fragment in fragments {
+            let packet = Packet::new_fragment(routing_header.clone(), session_id, fragment);
+            server.handle_received_packet(Ok(packet));
+        }
+
+        // Check the first packet is an ACK
+        let packet = recv3.recv().unwrap();
+        match packet.pack_type {
+            PacketType::Ack(ack) => {}
+            _ => { !panic!("Unexpected packet type, was expecting and ACK"); }
+        }
+
+        let mut assembler = Assembler::new();
+
+        // MESSAGE TO THE RECEIVER
+        // Reassemble the response and check it is a MessageFrom response
+        let packet = recv3.recv().unwrap();
+        match packet.pack_type {
+            PacketType::MsgFragment(fragment) => {
+                if let Some(message) = assembler.add_fragment(fragment, session_id) {
+
+                    let message = String::from_utf8_lossy(&message).to_string();
+                    match ChatResponseWrapper::from_string(message) {
+                        Ok(resp) => {
+                            match resp {
+                                ChatResponseWrapper::Chat(response) => {
+                                    match response {
+                                        ChatResponse::MessageFrom {
+                                            from,
+                                            message
+                                        } => {
+                                            // Check the sender and the message are correct
+                                            assert_eq!(8, from);
+                                            assert_eq!(message.clone().to_vec(), message);
+                                        }
+                                        _ => { !panic!("Unexpected request type, was expecting MessageFrom"); }
+                                    }
+                                }
+                                _ => { !panic!("Unexpected response type, expected ChatResponseWrapper::Chat"); }
+                            }
+                        }
+                        Err(_) => {
+                            !panic!("Something went wrong while parsing the request");
+                        }
+                    }
+                }
+            }
+            _ => { !panic!("Unexpected packet type, was expecting MsgFragment"); }
+        }
+
+        // CONFIRM MESSAGE TO THE SENDER
+        // Reassemble the response and check it is a MessageSent response
+        let packet = recv3.recv().unwrap();
+        match packet.pack_type {
+            PacketType::MsgFragment(fragment) => {
+                if let Some(message) = assembler.add_fragment(fragment, session_id) {
+
+                    let message = String::from_utf8_lossy(&message).to_string();
+                    match ChatResponseWrapper::from_string(message) {
+                        Ok(resp) => {
+                            match resp {
+                                ChatResponseWrapper::Chat(response) => {
+                                    match response {
+                                        ChatResponse::MessageSent => {}
+                                        _ => { !panic!("Unexpected request type, was expecting MessageFrom"); }
                                     }
                                 }
                                 _ => { !panic!("Unexpected response type, expected ChatResponseWrapper::Chat"); }
