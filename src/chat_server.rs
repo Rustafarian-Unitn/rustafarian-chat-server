@@ -1,14 +1,11 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt::format;
 use crossbeam_channel::{select_biased, Receiver, RecvError, Sender};
 use rustafarian_shared::assembler::assembler::Assembler;
 use rustafarian_shared::assembler::disassembler::Disassembler;
 use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerResponseWrapper};
 use rustafarian_shared::topology::{compute_route, Topology};
-use wg_2024::config::Client;
 use wg_2024::network::{NodeId, SourceRoutingHeader};
 use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NodeType, Packet, PacketType};
-use log::error;
 use rustafarian_shared::messages::chat_messages::{ChatRequest, ChatRequestWrapper, ChatResponseWrapper};
 use rustafarian_shared::messages::general_messages::{DroneSend, ServerType, ServerTypeResponse};
 use crate::chat_server::LogLevel::{DEBUG, ERROR, INFO};

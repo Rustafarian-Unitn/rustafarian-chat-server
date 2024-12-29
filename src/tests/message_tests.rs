@@ -1,7 +1,7 @@
 #[cfg(test)]
+#[allow(unused_imports, unreachable_code, unused_variables)]
 pub mod message_test {
     use std::collections::HashMap;
-    use std::fmt::Debug;
     use crossbeam_channel::{unbounded, Receiver, Sender};
     use rand::{Rng};
     use rustafarian_shared::assembler::assembler::Assembler;
@@ -10,8 +10,7 @@ pub mod message_test {
     use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerResponseWrapper};
     use rustafarian_shared::messages::general_messages::{DroneSend, ServerTypeRequest};
     use wg_2024::network::{NodeId, SourceRoutingHeader};
-    use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, Packet, PacketType};
-    use wg_2024::packet::NodeType::{Client, Drone, Server};
+    use wg_2024::packet::{Fragment, Packet, PacketType};
     use crate::chat_server::ChatServer;
 
     /// Init a test ChatServer with 2 drones connected to it

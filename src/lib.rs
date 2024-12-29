@@ -1,2 +1,7 @@
 pub mod chat_server;
-mod tests;
+
+#[cfg(test)]
+mod tests {
+    mod flooding_tests;
+    mod message_tests;
+}

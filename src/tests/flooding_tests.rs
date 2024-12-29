@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[allow(unused_imports, unreachable_code, unused_variables)]
 pub mod flooding_tests {
     use std::collections::HashMap;
     use crossbeam_channel::{unbounded, Receiver, Sender};
