@@ -277,7 +277,7 @@ impl ChatServer {
                         match request {
 
                             ChatRequest::ClientList => {
-                                self.handle_client_list_request()
+                                self.handle_client_list_request(destination_node, session_id);
                             }
                             ChatRequest::Register(node_id  ) => {
 
@@ -316,7 +316,20 @@ impl ChatServer {
         }
     }
 
-    fn handle_client_list_request(&self) {}
+    /// Send list of registered clients
+    ///
+    /// # Args
+    /// * `node_id` - id of the client that requested the list
+    /// * `session_id: u64` - the session this message belongs to
+    fn handle_client_list_request(&mut self, node_id: NodeId, session_id: u64) {
+
+        self.log(format!("Received request from {} to get client list", node_id).as_str(), INFO);
+
+        let response = ChatResponseWrapper::Chat(
+            ChatResponse::ClientList(self.registered_clients.clone().into_iter().collect())
+        );
+        self.send_message(response.stringify(), node_id, session_id);
+    }
 
     /// Register a client to the server
     ///
