@@ -6,7 +6,7 @@ use rustafarian_shared::messages::commander_messages::{SimControllerCommand, Sim
 use rustafarian_shared::topology::{compute_route, Topology};
 use wg_2024::network::{NodeId, SourceRoutingHeader};
 use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, NodeType, Packet, PacketType};
-use rustafarian_shared::messages::chat_messages::{ChatRequest, ChatRequestWrapper, ChatResponseWrapper};
+use rustafarian_shared::messages::chat_messages::{ChatRequest, ChatRequestWrapper, ChatResponse, ChatResponseWrapper};
 use rustafarian_shared::messages::general_messages::{DroneSend, ServerType, ServerTypeResponse};
 use crate::chat_server::LogLevel::{DEBUG, ERROR, INFO};
 
@@ -295,7 +295,7 @@ impl ChatServer {
                                     return;
                                 }
 
-                                self.handle_register_request(node_id);
+                                self.handle_register_request(node_id, session_id);
                             }
                             ChatRequest::SendMessage { .. } => {
                                 self.handle_send_message_request()
@@ -322,10 +322,17 @@ impl ChatServer {
     ///
     /// # Args
     /// * `node_id` - id of the client to register
-    fn handle_register_request(&mut self, node_id: NodeId) {
+    /// * `session_id: u64` - the session this message belongs to
+    fn handle_register_request(&mut self, node_id: NodeId, session_id: u64) {
 
         self.log(format!("New client ({}) registered!", node_id).as_str(), INFO);
         self.registered_clients.insert(node_id);
+
+        // Send response once client is registered
+        let response = ChatResponseWrapper::Chat(
+            ChatResponse::ClientRegistered
+        );
+        self.send_message(response.stringify(), node_id, session_id);
     }
     fn handle_send_message_request(&self) {}
 
@@ -337,12 +344,12 @@ impl ChatServer {
     fn handle_server_type_request(&mut self, destination_node: NodeId, session_id: u64) {
 
         self.log("Handling server type request", INFO);
-        let request = ChatResponseWrapper::ServerType(
+
+        // Send response with server type
+        let response = ChatResponseWrapper::ServerType(
             ServerTypeResponse::ServerType(ServerType::Chat)
         );
-        let request_json = request.stringify();
-
-        self.send_message(request_json, destination_node, session_id);
+        self.send_message(response.stringify(), destination_node, session_id);
     }
 
     /// Send a new message to a destination, fragmenting it in smaller chunks using the disassembler

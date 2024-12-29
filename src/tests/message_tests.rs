@@ -6,7 +6,7 @@ pub mod message_test {
     use rand::{Rng};
     use rustafarian_shared::assembler::assembler::Assembler;
     use rustafarian_shared::assembler::disassembler::Disassembler;
-    use rustafarian_shared::messages::chat_messages::{ChatRequest, ChatRequestWrapper, ChatResponseWrapper};
+    use rustafarian_shared::messages::chat_messages::{ChatRequest, ChatRequestWrapper, ChatResponse, ChatResponseWrapper};
     use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerResponseWrapper};
     use rustafarian_shared::messages::general_messages::{DroneSend, ServerTypeRequest};
     use wg_2024::network::{NodeId, SourceRoutingHeader};
@@ -158,6 +158,42 @@ pub mod message_test {
 
         // Check that the client (8) is registered
         assert!(server.registered_clients().contains(&8));
+
+        // Check the first packet is an ACK
+        let packet = recv3.recv().unwrap();
+        match packet.pack_type {
+            PacketType::Ack(ack) => {}
+            _ => { !panic!("Unexpected packet type, was expecting and ACK"); }
+        }
+
+        // Reassemble the response and check it is a ClientRegistered response
+        let mut assembler = Assembler::new();
+        let packet = recv3.recv().unwrap();
+        match packet.pack_type {
+            PacketType::MsgFragment(fragment) => {
+                if let Some(message) = assembler.add_fragment(fragment, session_id) {
+
+                    let message = String::from_utf8_lossy(&message).to_string();
+                    match ChatResponseWrapper::from_string(message) {
+                        Ok(resp) => {
+                            match resp {
+                                ChatResponseWrapper::Chat(response) => {
+                                    match response {
+                                        ChatResponse::ClientRegistered => {}
+                                        _ => { !panic!("Unexpected request type, was expecting ClientRegistered"); }
+                                    }
+                                }
+                                _ => { !panic!("Unexpected response type, expected ChatResponseWrapper::Chat"); }
+                            }
+                        }
+                        Err(_) => {
+                            !panic!("Something went wrong while parsing the request");
+                        }
+                    }
+                }
+            }
+            _ => { !panic!("Unexpected packet type, was expecting MsgFragment"); }
+        }
     }
 
     #[test]
@@ -203,7 +239,7 @@ pub mod message_test {
         let packet = recv3.recv().unwrap();
         match packet.pack_type {
             PacketType::Ack(ack) => {}
-            _ => { !panic!("Unexpected packet type"); }
+            _ => { !panic!("Unexpected packet type, was expecting ACK"); }
         }
 
         // Reassemble the response and check it is a ServerType response
@@ -219,16 +255,16 @@ pub mod message_test {
                             match req {
                                 ChatResponseWrapper::ServerType(_) => {
                                 }
-                                _ => { !panic!("Unexpected request type"); }
+                                _ => { !panic!("Unexpected response type, was expecting ServerType"); }
                             }
                         }
                         Err(_) => {
-                            !panic!("Something went wrong while parsing the request");
+                            !panic!("Something went wrong while parsing the response");
                         }
                     }
                 }
             }
-            _ => { !panic!("Unexpected packet type"); }
+            _ => { !panic!("Unexpected packet type, was expecting MsgFragment"); }
         }
     }
 }
