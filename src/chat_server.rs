@@ -815,7 +815,7 @@ impl ChatServer {
 
     /// Run the server, listening for incoming commands from the simulation controller or incoming
     /// packets from the adjacent drones
-    fn run(&mut self) {
+    pub fn run(&mut self) {
         loop {
             select_biased! {
                 // Handle commands from the simulation controller
