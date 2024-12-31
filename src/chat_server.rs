@@ -483,17 +483,27 @@ impl ChatServer {
             INFO
         );
 
-        // TODO Should it check that the receiver is registered? DO IT
+        if !self.registered_clients.contains(&receiver_id) {
+            self.log(
+                format!(
+                    "Cannot send message to client [{}], it needs to be registered",
+                    receiver_id
+                ).as_str(),
+                ERROR
+            );
+            return;
+        }
+
         // Sending message to receiver
-        self.log(
-            format!("-> Sending message [{}] to receiver [{}]", message, receiver_id).as_str(),
-            DEBUG
-        );
         let msg_response = ChatResponseWrapper::Chat(
             ChatResponse::MessageFrom { from: sender_id, message: message.into_bytes() }
         );
-        // TODO Should the session be the same one or a new one? CAMBIA SESSION ID
-        self.send_message(msg_response.stringify(), receiver_id, session_id);
+
+        // Generate a new random session_id
+        let mut rng = rand::thread_rng();
+        let new_session_id = rng.gen();
+
+        self.send_message(msg_response.stringify(), receiver_id, new_session_id);
 
         // Sending confirmation to the sender that the message has been sent
         self.log(

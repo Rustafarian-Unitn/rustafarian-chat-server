@@ -371,6 +371,56 @@ pub mod message_test {
 
         // Create a mock request and fragment it
         let mut disassembler = Disassembler::new();
+
+        // CLIENT REGISTRATION
+
+        // CLIENT 8
+        let request = ChatRequestWrapper::Chat(ChatRequest::Register(8));
+        let fragments = disassembler.disassemble_message(
+            request.stringify().into_bytes(),
+            session_id
+        );
+
+        // Create a mock routing header for the packet, coming from the node 8
+        let routing_header = SourceRoutingHeader::new(
+            vec![8, 6, 3, 1],
+            3
+        );
+
+        // Send fragments to the server
+        for fragment in fragments {
+            let packet = Packet::new_fragment(routing_header.clone(), session_id, fragment);
+            server.handle_received_packet(Ok(packet));
+        }
+
+        // Discard  ACK and Response for client registration
+        let packet = recv3.recv().unwrap();
+        let packet = recv3.recv().unwrap();
+
+        // CLIENT 9
+        let request = ChatRequestWrapper::Chat(ChatRequest::Register(9));
+        let fragments = disassembler.disassemble_message(
+            request.stringify().into_bytes(),
+            session_id
+        );
+
+        // Create a mock routing header for the packet, coming from the node 8
+        let routing_header = SourceRoutingHeader::new(
+            vec![9, 7, 3, 1],
+            3
+        );
+
+        // Send fragments to the server
+        for fragment in fragments {
+            let packet = Packet::new_fragment(routing_header.clone(), session_id, fragment);
+            server.handle_received_packet(Ok(packet));
+        }
+
+        // Discard  ACK and Response for client registration
+        let packet = recv3.recv().unwrap();
+        let packet = recv3.recv().unwrap();
+
+
         let message = "Test message".to_string();
         let request = ChatRequestWrapper::Chat(ChatRequest::SendMessage {
             from: 8,
