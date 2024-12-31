@@ -835,7 +835,7 @@ impl ChatServer {
     }
 
     // GETTERS AND SETTERS
-    pub fn topology(&self) -> &Topology { &self.topology }
+    pub fn topology(&mut self) -> &mut Topology { &mut self.topology }
 
     /// Utility method that updates the current topology of the server,
     /// adding the `nodes` and `edges`
