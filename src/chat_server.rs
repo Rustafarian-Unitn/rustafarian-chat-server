@@ -738,7 +738,7 @@ impl ChatServer {
         let flood_request = Packet::new_flood_request(
             SourceRoutingHeader::empty_route(),
             session_id,
-            FloodRequest::new(self.current_flood_id, self.id, path_trace: vec![(self.id, NodeType::Server)])
+            FloodRequest::initialize(self.current_flood_id, self.id, NodeType::Server)
         );
 
         for (id, sender) in self.node_senders.clone() {
