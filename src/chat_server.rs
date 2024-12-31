@@ -1,14 +1,13 @@
 use std::collections::{HashMap, HashSet};
-use crossbeam_channel::{select_biased, Receiver, RecvError, SendError, Sender};
+use crossbeam_channel::{select_biased, Receiver, RecvError, Sender};
 use rand::Rng;
 use rustafarian_shared::assembler::assembler::Assembler;
 use rustafarian_shared::assembler::disassembler::Disassembler;
 use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerResponseWrapper};
 use rustafarian_shared::topology::{compute_route, Topology};
 use wg_2024::network::{NodeId, SourceRoutingHeader};
-use wg_2024::packet::{Ack, FloodRequest, FloodResponse, Fragment, Nack, NodeType, Packet, PacketType};
+use wg_2024::packet::{Ack, FloodRequest, FloodResponse, Fragment, Nack, NackType, NodeType, Packet, PacketType};
 use rustafarian_shared::messages::chat_messages::{ChatRequest, ChatRequestWrapper, ChatResponse, ChatResponseWrapper};
-use rustafarian_shared::messages::commander_messages::SimControllerEvent::PacketReceived;
 use rustafarian_shared::messages::general_messages::{DroneSend, ServerType, ServerTypeResponse};
 use crate::chat_server::LogLevel::{DEBUG, ERROR, INFO};
 
@@ -148,7 +147,9 @@ impl ChatServer {
         );
 
         // Send ACK to the sender
-        self.send_ack(sender_id, fragment_id, session_id);
+        let mut fallback_route = packet.routing_header.hops;
+        fallback_route.reverse();
+        self.send_ack(sender_id, fragment_id, session_id, fallback_route);
 
         // Reassemble message fragment, if a complete message is formed handle it
         if let Some(message) = self.assembler.add_fragment(fragment, session_id) {
@@ -215,13 +216,16 @@ impl ChatServer {
             INFO
         );
 
+        // Avoid starting a new flood if the packet has been dropped,
+        if nack_type == NackType::Dropped {
+            self.send_packet(packet);
+            return;
+        }
+
         // Add tuple to list in order to retry and send the fragment
         self.fragment_retry_queue.insert((session_id, fragment_id));
-
         // If no flood is currently in process, start a new one to update the topology
-        if !self.is_flooding {
-            // TODO Start new flood
-        }
+        if !self.is_flooding { self.start_flooding() }
     }
 
     /// Method that handles the reception of a flood_request, currently update the path trace
@@ -479,7 +483,7 @@ impl ChatServer {
             INFO
         );
 
-        // TODO Should it check that the receiver is registered?
+        // TODO Should it check that the receiver is registered? DO IT
         // Sending message to receiver
         self.log(
             format!("-> Sending message [{}] to receiver [{}]", message, receiver_id).as_str(),
@@ -488,7 +492,7 @@ impl ChatServer {
         let msg_response = ChatResponseWrapper::Chat(
             ChatResponse::MessageFrom { from: sender_id, message: message.into_bytes() }
         );
-        // TODO Should the session be the same one or a new one?
+        // TODO Should the session be the same one or a new one? CAMBIA SESSION ID
         self.send_message(msg_response.stringify(), receiver_id, session_id);
 
         // Sending confirmation to the sender that the message has been sent
@@ -538,20 +542,47 @@ impl ChatServer {
         // Find the route to the destination node (the client that sent the request) and create
         // the common header for all the fragments
         let header = self.topology.get_routing_header(self.id, destination_node);
-        self.log(
-            format!(
-            "New header created - [Destination: {}, Route: {:?}]",
-            destination_node,
-            header.hops
-            ).as_str(),
-            DEBUG
-        );
 
-        // Send each fragment to the node, using send_packet method
-        for fragment in fragments {
+        // If no route was found, then add the fragments to resend later, and start a new flood
+        if header.is_empty() {
+            self.log(
+                format!(
+                    "Trying to send a message to node [{}], but no route was found, starting new flood",
+                    destination_node
+                ).as_str(),
+                ERROR
+            );
 
-            let packet = Packet::new_fragment(header.clone(), session_id, fragment);
-            self.send_packet(packet);
+
+            for fragment in fragments {
+
+                // Add to retry queue
+                self.fragment_retry_queue.insert((session_id, fragment.fragment_index));
+
+                // Create a packet for each fragment and save it in the server memory, used when
+                // the fragment will be re-handled later
+                let packet = Packet::new_fragment(header.clone(), session_id, fragment);
+                self.fragment_sent.entry(session_id)
+                    .or_insert_with(Vec::new)
+                    .push(packet.clone());
+            }
+            if !self.is_flooding { self.start_flooding(); }
+        } else {
+            self.log(
+                format!(
+                    "New header created - [Destination: {}, Route: {:?}]",
+                    destination_node,
+                    header.hops
+                ).as_str(),
+                DEBUG
+            );
+
+            // Send each fragment to the node, using send_packet method
+            for fragment in fragments {
+
+                let packet = Packet::new_fragment(header.clone(), session_id, fragment);
+                self.send_packet(packet);
+            }
         }
     }
 
@@ -634,7 +665,14 @@ impl ChatServer {
     /// * `destination_node: NodeId` - the selected destination node, used to compute the path
     /// * `fragment_id: u64` - the id of the fragment the ACK refers to
     /// * `session_id: u64` - the current session the fragment belongs to
-    fn send_ack(&mut self, destination_node: NodeId, fragment_id: u64, session_id: u64) {
+    /// * `fallback_route: Vec<NodeId>` - used when the server is unable to compute a route
+    fn send_ack(
+        &mut self,
+        destination_node: NodeId,
+        fragment_id: u64,
+        session_id: u64,
+        fallback_route: Vec<NodeId>
+    ) {
 
         self.log(
             format!(
@@ -646,11 +684,24 @@ impl ChatServer {
         );
 
         // Create a new routing header and compute route
-        let mut routing_header = SourceRoutingHeader::initialize(
-            compute_route(&self.topology, self.id, destination_node)
+        let mut routing_header = self
+            .topology
+            .get_routing_header(self.id, destination_node);
+
+        // If no route was computed, use the fallback one
+        if routing_header.is_empty() {
+            self.log("No route computed, using fallback one", DEBUG);
+            routing_header.hops = fallback_route;
+        }
+
+        self.log(
+            format!(
+                "New header created - [Destination: {}, Route: {:?}]",
+                destination_node,
+                routing_header.hops
+            ).as_str(),
+            DEBUG
         );
-        routing_header.increase_hop_index();
-        self.log(format!("Route for ACK computed: {:?}", routing_header.hops).as_str(), DEBUG);
 
         // Create a new packet and send it
         let packet = Packet::new_ack(routing_header, session_id, fragment_id);
@@ -722,9 +773,6 @@ impl ChatServer {
                 DEBUG
             );
 
-            // Remove the current tuple from the set
-            self.fragment_retry_queue.remove(&(session_id, fragment_id));
-
             // Fetch information regarding the fragment from the server
             // If there are fragments for the current session
             if let Some(fragments) = self.fragment_sent.get_mut(&session_id) {
@@ -745,6 +793,17 @@ impl ChatServer {
                         self.id,
                         destination_id
                     );
+                    if source_header.is_empty() {
+                        self.log(
+                            format!(
+                                "No route was computed to destination node [{}]", destination_id
+                            ).as_str(),
+                            ERROR
+                        );
+
+                        if !self.is_flooding { self.start_flooding(); }
+                        continue;
+                    }
 
                     // Fetch the fragment from the packet
                     let PacketType::MsgFragment(fragment) = packet.clone().pack_type
@@ -754,7 +813,7 @@ impl ChatServer {
                                 "Expecting MsgFragment, received wrong type in resend_fragments",
                                 ERROR
                             );
-                            return;
+                            continue;
                         };
 
                     // Create a new packet and send it
@@ -765,7 +824,11 @@ impl ChatServer {
                     );
 
                     self.send_packet(new_packet);
+
+                    // Remove the current tuple from the set
+                    self.fragment_retry_queue.remove(&(session_id, fragment_id));
                 } else {
+
                     // NO FRAGMENT FOUND
                     self.log(
                         format!("No fragment with id [{}] was found in session [{}]",
@@ -776,6 +839,7 @@ impl ChatServer {
                     );
                 }
             } else {
+
                 // NO SESSION FOUND
                 self.log(
                     format!("No session with id [{}] is registered", session_id).as_str(),
@@ -816,6 +880,9 @@ impl ChatServer {
     /// Run the server, listening for incoming commands from the simulation controller or incoming
     /// packets from the adjacent drones
     fn run(&mut self) {
+
+        // Flood the first time
+        self.start_flooding();
         loop {
             select_biased! {
                 // Handle commands from the simulation controller
