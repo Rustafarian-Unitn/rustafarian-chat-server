@@ -562,7 +562,7 @@ impl ChatServer {
     fn send_packet(&mut self, packet: Packet) {
 
         self.log(
-            format!("-> Sending a new packet with session [{}]", packet.session_id).as_str(),
+            format!("-> Sending a new packet with session [{}]", packet).as_str(),
             INFO
         );
         // If the packet is a MsgFragment, then add it to the list of sent fragment
@@ -574,11 +574,10 @@ impl ChatServer {
                 .or_insert_with(Vec::new)
                 .push(packet.clone());
         }
-        
-        let message = format!("Packet has an empty route, abort sending! {:?}", packet);
+
         // If packet has empty route, abort
         if packet.routing_header.hops.is_empty() {
-            self.log(&message, ERROR);
+            self.log("Packet has an empty route, abort sending!", ERROR);
             return
         }
 
