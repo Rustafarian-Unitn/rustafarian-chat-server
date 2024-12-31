@@ -574,10 +574,11 @@ impl ChatServer {
                 .or_insert_with(Vec::new)
                 .push(packet.clone());
         }
-
+        
+        let message = format!("Packet has an empty route, abort sending! {:?}", packet);
         // If packet has empty route, abort
         if packet.routing_header.hops.is_empty() {
-            self.log("Packet has an empty route, abort sending!", ERROR);
+            self.log(&message, ERROR);
             return
         }
 
