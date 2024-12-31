@@ -879,7 +879,7 @@ impl ChatServer {
 
     /// Run the server, listening for incoming commands from the simulation controller or incoming
     /// packets from the adjacent drones
-    fn run(&mut self) {
+    pub fn run(&mut self) {
 
         // Flood the first time
         self.start_flooding();
