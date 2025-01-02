@@ -1,11 +1,10 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt::format;
 use crossbeam_channel::{select_biased, Receiver, RecvError, Sender};
 use rand::Rng;
 use rustafarian_shared::assembler::assembler::Assembler;
 use rustafarian_shared::assembler::disassembler::Disassembler;
 use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerResponseWrapper};
-use rustafarian_shared::topology::{compute_route, Topology};
+use rustafarian_shared::topology::{Topology};
 use wg_2024::network::{NodeId, SourceRoutingHeader};
 use wg_2024::packet::{Ack, FloodRequest, FloodResponse, Fragment, Nack, NackType, NodeType, Packet, PacketType};
 use rustafarian_shared::messages::chat_messages::{ChatRequest, ChatRequestWrapper, ChatResponse, ChatResponseWrapper};
@@ -82,6 +81,39 @@ impl ChatServer {
     /// Handle incoming commands from simulation controller
     pub fn handle_controller_commands(&mut self, command: Result<SimControllerCommand, RecvError>) {
 
+        // Handle error while receiving command
+        if command.is_err() {
+            let log_msg = format!(
+                "Error in the reception of a command from Simulation Controller - error: [{}]",
+                command.err().unwrap()
+            );
+            self.log(log_msg.as_str(), ERROR);
+            return;
+        }
+
+        self.log("<- Received new command from Simulation Controller", INFO);
+
+        let command = command.unwrap();
+        match command {
+            SimControllerCommand::AddSender(node_id, sender) => {
+                self.log("Received AddSender command from SC", DEBUG);
+                self.handle_add_sender_command(node_id, sender);
+            }
+            SimControllerCommand::RemoveSender(node_id) => {
+                self.log("Received AddSender command from SC", DEBUG);
+                self.handle_remove_sender_command(node_id);
+            }
+            _ => {
+                self.log(
+                    format!(
+                        "Received an unexpected command from Simulation Controller, skip handling.\
+                         Command: [{:?}]",
+                        command
+                    ).as_str(),
+                    ERROR
+                );
+            }
+        }
     }
 
     /// Handle incoming messages
@@ -90,8 +122,7 @@ impl ChatServer {
         // Handle error while receiving packet
         if packet.is_err() {
             let log_msg = format!(
-                "Error in the reception of the packet for the chat server with id [{}] - packet error: [{}]",
-                self.id,
+                "Error in the reception of a packet - packet error: [{}]",
                 packet.err().unwrap()
             );
             self.log(log_msg.as_str(), ERROR);
@@ -101,7 +132,7 @@ impl ChatServer {
         let packet = packet.unwrap();
         self.log(
             format!("<- Received new packet of type [{}]", packet.pack_type).as_str(),
-            DEBUG
+            INFO
         );
 
         match packet.pack_type.clone() {
@@ -128,6 +159,9 @@ impl ChatServer {
             }
         }
     }
+
+
+    // <== DRONE PACKET HANDLING ==>
 
     /// Method that handles a message fragments, try and form a complete message and sends an ACK
     /// back to the sender
@@ -568,6 +602,63 @@ impl ChatServer {
         self.send_message(response.stringify(), destination_node, session_id);
     }
 
+
+    // <== SIMULATION CONTROLLER COMMAND HANDLING ==>
+
+    /// Method to handle the AddSender command from the Simulation Controller, adding the node and
+    /// sender to the list of neighbours and updating the topology
+    ///
+    /// # Args
+    /// `node_id: NodeId` - the node to add
+    /// `sender: Sender<Packet>` - the sender channel of the node to add
+    fn handle_add_sender_command(&mut self, node_id: NodeId, sender: Sender<Packet>) {
+
+        self.log(format!("Adding node [{}] to neighbours", node_id).as_str(), INFO);
+
+        // Check that the node is not present among neighbours
+        if self.node_senders.contains_key(&node_id) {
+            // TODO Should this be INFO or ERROR level?
+            self.log(format!("Node [{}], already found among neighbours", node_id).as_str(), ERROR);
+            return;
+        }
+
+        self.node_senders.insert(node_id, sender);
+        // Update the topology adding the current node, and an edge between the server and node
+        self.update_topology(vec![node_id], vec![(self.id, node_id)]);
+    }
+
+    /// Method to handle the RemoveSender command from Simulation Controller, removing the node from
+    /// the list of neighbours, and updating the topology accordingly
+    ///
+    /// # Args
+    /// `node_id: NodeId` - the node to remove
+    fn handle_remove_sender_command(&mut self, node_id: NodeId) {
+
+        if self.node_senders.contains_key(&node_id) {
+            self.node_senders.remove(&node_id);
+            self.topology.remove_node(node_id);
+
+            self.log(
+                format!(
+                    "Node with id [{}] successfully removed",
+                    node_id
+                ).as_str(),
+                INFO
+            );
+        } else {
+            self.log(
+                format!(
+                    "No node with id [{}] found among neighbours, doing nothing",
+                    node_id
+                ).as_str(),
+                INFO
+            );
+        }
+    }
+
+
+    // <== UTILITY METHODS ==>
+
     /// Send a new message to a destination, fragmenting it in smaller chunks using the disassembler
     ///
     /// # Args
@@ -922,12 +1013,17 @@ impl ChatServer {
         }
     }
 
+
     /// Run the server, listening for incoming commands from the simulation controller or incoming
     /// packets from the adjacent drones
     pub fn run(&mut self) {
 
+        // Add himself to the topology
+        self.topology.add_node(self.id);
+
         // Flood the first time
         self.start_flooding();
+
         loop {
             select_biased! {
                 // Handle commands from the simulation controller
@@ -946,7 +1042,8 @@ impl ChatServer {
         }
     }
 
-    // GETTERS AND SETTERS
+
+    // <== GETTERS AND SETTERS ==>
     pub fn topology(&self) -> &Topology { &self.topology }
 
     /// Utility method that updates the current topology of the server,
@@ -973,6 +1070,8 @@ impl ChatServer {
     }
 
     pub fn registered_clients(&self) -> &HashSet<NodeId> { &self.registered_clients }
+
+    pub fn neighbours(&self) ->&HashMap<NodeId, Sender<Packet>> { &self.node_senders }
 
     pub fn fragment_sent(&self) -> &HashMap<u64, Vec<Packet>> { &self.fragment_sent }
 
