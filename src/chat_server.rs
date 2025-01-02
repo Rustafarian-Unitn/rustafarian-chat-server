@@ -106,18 +106,23 @@ impl ChatServer {
         match packet.pack_type.clone() {
 
             PacketType::MsgFragment(fragment) => {
+                self.log("Received MsgFragment", DEBUG);
                 self.handle_message_fragment(packet, fragment)
             }
             PacketType::Ack(ack) => {
+                self.log("Received ACK", DEBUG);
                 self.handle_ack(packet, ack);
             }
             PacketType::Nack(nack) => {
+                self.log("Received NACK", DEBUG);
                 self.handle_nack(packet, nack)
             }
             PacketType::FloodRequest(flood_request) => {
+                self.log("Received FloodRequest", DEBUG);
                 self.handle_flood_request(packet, flood_request);
             }
             PacketType::FloodResponse(flood_response) => {
+                self.log("Received FloodResponse", DEBUG);
                 self.handle_flood_response(flood_response);
             }
         }
@@ -315,7 +320,6 @@ impl ChatServer {
             return;
         }
 
-        // TODO Could use update_topology method
         for (i, node) in flood_response.path_trace.iter().enumerate() {
 
             // Check if node is already in the topology, if not add it
