@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
-use crossbeam_channel::{select_biased, Receiver, RecvError, Sender};
+use crossbeam_channel::{select_biased, Receiver, RecvError, SendError, Sender};
 use rand::Rng;
 use rustafarian_shared::assembler::assembler::Assembler;
 use rustafarian_shared::assembler::disassembler::Disassembler;
-use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerResponseWrapper};
+use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerMessage, SimControllerResponseWrapper};
 use rustafarian_shared::topology::{Topology};
 use wg_2024::network::{NodeId, SourceRoutingHeader};
 use wg_2024::packet::{Ack, FloodRequest, FloodResponse, Fragment, Nack, NackType, NodeType, Packet, PacketType};
@@ -96,13 +96,21 @@ impl ChatServer {
         let command = command.unwrap();
         match command {
             SimControllerCommand::AddSender(node_id, sender) => {
+
                 self.log("Received AddSender command from SC", DEBUG);
                 self.handle_add_sender_command(node_id, sender);
             }
             SimControllerCommand::RemoveSender(node_id) => {
+
                 self.log("Received AddSender command from SC", DEBUG);
                 self.handle_remove_sender_command(node_id);
             }
+            SimControllerCommand::Topology => {
+
+                self.log("Received Topology command from SC", DEBUG);
+                self.handle_topology_command()
+            }
+
             _ => {
                 self.log(
                     format!(
@@ -605,8 +613,8 @@ impl ChatServer {
 
     // <== SIMULATION CONTROLLER COMMAND HANDLING ==>
 
-    /// Method to handle the AddSender command from the Simulation Controller, adding the node and
-    /// sender to the list of neighbours and updating the topology
+    /// Method that handles the AddSender command from the Simulation Controller, adding the node
+    /// and sender to the list of neighbours and updating the topology
     ///
     /// # Args
     /// `node_id: NodeId` - the node to add
@@ -627,8 +635,8 @@ impl ChatServer {
         self.update_topology(vec![node_id], vec![(self.id, node_id)]);
     }
 
-    /// Method to handle the RemoveSender command from Simulation Controller, removing the node from
-    /// the list of neighbours, and updating the topology accordingly
+    /// Method that handles the RemoveSender command from Simulation Controller, removing the node
+    /// from the list of neighbours, and updating the topology accordingly
     ///
     /// # Args
     /// `node_id: NodeId` - the node to remove
@@ -653,6 +661,33 @@ impl ChatServer {
                 ).as_str(),
                 INFO
             );
+        }
+    }
+
+    /// Method that handles the Topology command from Simulation Controller, sending the current
+    /// topology
+    fn handle_topology_command(&mut self) {
+
+        self.log("Sending current topology to Simulation Controller", INFO);
+
+        let response = SimControllerResponseWrapper::Message(
+            SimControllerMessage::TopologyResponse(self.topology.clone())
+        );
+
+        match self.sim_controller_send.send(response) {
+
+            Ok(_) => {
+                self.log("Topology successfully delivered to Simulation Controller", DEBUG);
+            }
+            Err(e) => {
+                self.log(
+                    format!(
+                        "Error while sending topology to Simulation Controller - error [{:?}]",
+                        e
+                    ).as_str(),
+                    ERROR
+                );
+            }
         }
     }
 

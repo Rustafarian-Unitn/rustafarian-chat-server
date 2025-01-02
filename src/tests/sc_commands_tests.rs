@@ -4,7 +4,7 @@ pub mod sc_command_tests {
     use std::collections::HashMap;
     use crossbeam_channel::{unbounded, Receiver, Sender};
     use rand::{Rng};
-    use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerResponseWrapper};
+    use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerMessage, SimControllerResponseWrapper};
     use wg_2024::network::{NodeId, SourceRoutingHeader};
     use wg_2024::packet::{FloodRequest, FloodResponse, Packet, PacketType};
     use wg_2024::packet::NodeType::{Client, Drone, Server};
@@ -14,7 +14,7 @@ pub mod sc_command_tests {
     ///
     /// # Return
     /// Returns the init server
-    fn init_test_network() -> ChatServer {
+    fn init_test_network() -> (ChatServer, Receiver<SimControllerResponseWrapper>) {
 
         // NEIGHBOURS CHANNELS
         let node_2: (Sender<Packet>, Receiver<Packet>) = unbounded();
@@ -38,13 +38,13 @@ pub mod sc_command_tests {
             true
         );
 
-        server
+        (server, sim_controller_resp.1)
     }
 
     #[test]
     fn should_handle_add_sender_command() {
 
-        let mut server = init_test_network();
+        let (mut server, _) = init_test_network();
         // Add himself to the topology, this is normally done in the .run method
         server.update_topology(vec![1], vec![]);
 
@@ -71,7 +71,7 @@ pub mod sc_command_tests {
     #[test]
     fn should_handle_remove_sender_command() {
 
-        let mut server = init_test_network();
+        let (mut server, _) = init_test_network();
         // Add himself to the topology, this is normally done in the .run method
         server.update_topology(vec![1], vec![]);
 
@@ -96,5 +96,46 @@ pub mod sc_command_tests {
         // Check there is an edge between the node and the server and vice versa
         assert!(!topology.edges().contains_key(&node_id));
         assert!(!topology.edges().get(&1).unwrap().contains(&node_id));
+    }
+
+    #[test]
+    fn should_handle_topology_command() {
+
+        let (mut server, sc_recv) = init_test_network();
+        // Add himself to the topology, this is normally done in the .run method
+        server.update_topology(vec![1], vec![]);
+
+        // Add a neighbour
+        let node_id: NodeId = 3;
+        let node3_channel: (Sender<Packet>, Receiver<Packet>) = unbounded();
+        let command = SimControllerCommand::AddSender(node_id, node3_channel.0);
+        server.handle_controller_commands(Ok(command));
+
+        let command = SimControllerCommand::Topology;
+        server.handle_controller_commands(Ok(command));
+
+        let response = sc_recv.recv().unwrap();
+
+        match response {
+            SimControllerResponseWrapper::Message(msg) => {
+                match msg {
+                    SimControllerMessage::TopologyResponse(topology) => {
+                        // Check the topology is correct
+                        assert_eq!(2, topology.nodes().len());
+                        assert!(topology.nodes().contains(&node_id));
+
+                        // Check there is an edge between the node and the server and vice versa
+                        assert!(topology.edges().get(&node_id).unwrap().contains(&1));
+                        assert!(topology.edges().get(&1).unwrap().contains(&node_id));
+                    }
+                    _ => {
+                        panic!("Unexpected SimControllerMessage type")
+                    }
+                }
+            }
+            SimControllerResponseWrapper::Event(_) => {
+                panic!("Unexpected SimControllerResponseWrapper type")
+            }
+        }
     }
 }
