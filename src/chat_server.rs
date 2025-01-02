@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt::format;
 use crossbeam_channel::{select_biased, Receiver, RecvError, Sender};
 use rand::Rng;
 use rustafarian_shared::assembler::assembler::Assembler;
@@ -123,7 +124,7 @@ impl ChatServer {
             }
             PacketType::FloodResponse(flood_response) => {
                 self.log("Received FloodResponse", DEBUG);
-                self.handle_flood_response(flood_response);
+                self.handle_flood_response(packet, flood_response);
             }
         }
     }
@@ -302,24 +303,55 @@ impl ChatServer {
         // self.node_senders.get(&sender_id).unwrap().send(flood_response).unwrap();
     }
 
-    /// Method that handles the reception of a flood response message, updating the topology.
+    /// Method that handles the reception of a flood response message, updating the topology, or
+    /// forwarding it to the correct node.
     ///
     /// # Args
+    /// * `packet: Packet` - the original packet received by the server, used to forward the flood
+    /// response in case it does not belong to this server
     /// * `flood_response: FloodResponse` - the flood response received by the server
-    fn handle_flood_response(&mut self, flood_response: FloodResponse) {
+    fn handle_flood_response(&mut self, mut packet: Packet, flood_response: FloodResponse) {
 
-        self.log("<- New flood response received, updating topology", INFO);
+        // If the flood was not started by this server, then forward it
+        let initiator = flood_response.path_trace[0].0;
+        if initiator != self.id {
+
+            self.log(
+                "<- Received a flood response, but the server is not the initiator.\
+                Sending it along the network",
+                INFO
+            );
+            // Check if the server is the right receiver, if so advance the hop index and send it
+            let current_node = packet.routing_header.current_hop().unwrap();
+            if current_node == self.id {
+
+                packet.routing_header.increase_hop_index();
+                self.send_packet(packet);
+            } else {
+                // TODO Should never happen (I think...), check
+                self.log(
+                    format!(
+                        "Server is not the right recipient, expecting node {}",
+                        current_node
+                    ).as_str(),
+                    ERROR
+                );
+            }
+
+            return;
+        }
 
         // Only handle flood responses if they have the current id, to avoid updating the topology
         // with older information
         if flood_response.flood_id != self.current_flood_id {
             self.log(
-                "Received a flood response with a wrong id, ignoring it",
+                "<- Received a flood response with a wrong id, ignoring it",
                 INFO
             );
             return;
         }
 
+        self.log("<- New flood response received, updating topology", INFO);
         for (i, node) in flood_response.path_trace.iter().enumerate() {
 
             // Check if node is already in the topology, if not add it
@@ -626,9 +658,8 @@ impl ChatServer {
             return
         }
 
-        // Send the packet to the first node in the route, and handle different outcomes
-        let node_id = packet.routing_header.hops[1];
-
+        // Send the packet to the next node in the route
+        let node_id = packet.routing_header.current_hop().unwrap();
         match self.node_senders.get(&node_id) {
 
             Some(node) => {
