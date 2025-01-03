@@ -10,7 +10,7 @@ pub mod ack_nack_tests {
     use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerResponseWrapper};
     use rustafarian_shared::messages::general_messages::{DroneSend, ServerTypeRequest};
     use wg_2024::network::{NodeId, SourceRoutingHeader};
-    use wg_2024::packet::{Fragment, Packet, PacketType};
+    use wg_2024::packet::{FloodRequest, Fragment, Nack, NackType, Packet, PacketType};
     use crate::chat_server::ChatServer;
 
     /// Init a test ChatServer with 2 drones connected to it
@@ -285,5 +285,188 @@ pub mod ack_nack_tests {
         // Check that no fragment is removed
         assert!(!server.fragment_sent().is_empty());
         assert!(!server.fragment_sent().get(&session_id).unwrap().is_empty())
+    }
+
+    #[test]
+    fn should_handle_nack() {
+        let mut rng = rand::thread_rng();
+        let (
+            mut server,
+            recv2,
+            recv3,
+            sc_recv
+        ) = init_test_network();
+        let session_id: u64 = rng.gen();
+
+        // Add fake nodes to the topology
+        server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
+
+        // Create a mock request, using ServerType so the server sends a response back to the client
+        let mut disassembler = Disassembler::new();
+        let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
+        let fragments = disassembler.disassemble_message(
+            request.stringify().into_bytes(),
+            session_id
+        );
+
+        // Create a mock routing header for the packet, coming from the node 8
+        let routing_header = SourceRoutingHeader::new(
+            vec![8, 7, 3, 1],
+            3
+        );
+
+        let total_fragments = fragments.len();
+
+        // Check that no fragment are present
+        assert!(server.fragment_sent().is_empty());
+
+        // Send fragments to the server
+        for fragment in fragments.clone() {
+            let packet = Packet::new_fragment(routing_header.clone(), session_id, fragment);
+            server.handle_received_packet(Ok(packet));
+        }
+
+        // Check the fragment of the response are added to the list of fragment sent
+        assert!(!server.fragment_sent().is_empty());
+        // Check the server is not currently flooding
+        assert!(!server.is_flooding());
+
+        // Remove any packet in the channels, to avoid problems
+        // on the assertions for the flood request
+        while let Ok(_) = recv2.try_recv() {}
+        while let Ok(_) = recv3.try_recv() {}
+
+        // Send NACK to the server for each fragment
+        for fragment in fragments.clone() {
+            let nack = Packet::new_nack(
+                routing_header.clone(),
+                session_id,
+                Nack{
+                    fragment_index: fragment.fragment_index,
+                    nack_type: NackType::ErrorInRouting(7)
+                }
+            );
+            server.handle_received_packet(Ok(nack));
+        }
+
+        // Check the fragment are not removed
+        assert!(!server.fragment_sent().is_empty());
+
+        // Check the fragment are added to the retry_later queue
+        assert!(!server.fragment_retry_queue().is_empty());
+        for fragment in fragments {
+            assert!(
+                server
+                .fragment_retry_queue()
+                .contains(&(session_id, fragment.fragment_index))
+            );
+        }
+
+        // Check the server has started a new flood
+        assert!(server.is_flooding());
+        
+        let fr1 = recv2.recv().unwrap();
+        let fr2 = recv3.recv().unwrap();
+
+        match fr1.pack_type {
+            PacketType::FloodRequest(fr) => {
+                assert_eq!(1, fr.initiator_id);
+            }
+            _ => {
+                panic!("Wrong packet type for drone 2");
+            }
+        }
+
+        match fr2.pack_type {
+            PacketType::FloodRequest(fr) => {
+                assert_eq!(1, fr.initiator_id);
+            }
+            _ => {
+                panic!("Wrong packet type for drone 3");
+            }
+        }
+    }
+
+    #[test]
+    fn should_handle_nack_on_packet_dropped() {
+        let mut rng = rand::thread_rng();
+        let (
+            mut server,
+            recv2,
+            recv3,
+            sc_recv
+        ) = init_test_network();
+        let session_id: u64 = rng.gen();
+
+        // Add fake nodes to the topology
+        server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
+
+        // Create a mock request, using ServerType so the server sends a response back to the client
+        let mut disassembler = Disassembler::new();
+        let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
+        let fragments = disassembler.disassemble_message(
+            request.stringify().into_bytes(),
+            session_id
+        );
+
+        // Create a mock routing header for the packet, coming from the node 8
+        let routing_header = SourceRoutingHeader::new(
+            vec![8, 7, 3, 1],
+            3
+        );
+
+        let total_fragments = fragments.len();
+
+        // Check that no fragment are present
+        assert!(server.fragment_sent().is_empty());
+
+        // Send fragments to the server
+        for fragment in fragments.clone() {
+            let packet = Packet::new_fragment(routing_header.clone(), session_id, fragment);
+            server.handle_received_packet(Ok(packet));
+        }
+
+        // Check the fragment of the response are added to the list of fragment sent
+        assert!(!server.fragment_sent().is_empty());
+        // Check the server is not currently flooding
+        assert!(!server.is_flooding());
+
+        // Remove any packet in the channels, to avoid problems
+        // on the assertions for the flood request
+        while let Ok(_) = recv2.try_recv() {}
+        while let Ok(_) = recv3.try_recv() {}
+
+        // Send NACK to the server for each fragment
+        for fragment in fragments.clone() {
+            let nack = Packet::new_nack(
+                routing_header.clone(),
+                session_id,
+                Nack{
+                    fragment_index: fragment.fragment_index,
+                    nack_type: NackType::Dropped
+                }
+            );
+            server.handle_received_packet(Ok(nack));
+        }
+
+        // Check the fragment are not removed and are not added to the retry_queue
+        assert!(!server.fragment_sent().is_empty());
+        assert!(server.fragment_retry_queue().is_empty());
+
+        // Check the server has not started a new flood
+        assert!(!server.is_flooding());
+
+        while let Ok(response) = recv3.try_recv() {
+
+            // Check the packet is the right one
+            assert_eq!(session_id, response.session_id);
+            assert_eq!(1, response.routing_header.hops[0]);
+            match response.pack_type {
+                PacketType::MsgFragment(fr) => {}
+                _ => {
+                    panic!("Wrong packet type for drone 2");
+                }
+            }
+        }
     }
 }
