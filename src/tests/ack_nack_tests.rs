@@ -54,7 +54,6 @@ pub mod ack_nack_tests {
     }
 
     #[test]
-    // TODO Wrong test, remake this
     fn should_handle_ack() {
         let mut rng = rand::thread_rng();
         let (
@@ -68,7 +67,7 @@ pub mod ack_nack_tests {
         // Add fake nodes to the topology
         server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
 
-        // Create a mock request and fragment it
+        // Create a mock request, using ServerType so the server sends a response back to the client
         let mut disassembler = Disassembler::new();
         let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
         let fragments = disassembler.disassemble_message(
@@ -84,19 +83,20 @@ pub mod ack_nack_tests {
 
         let total_fragments = fragments.len();
 
+        // Check that no fragment are present
+        assert!(server.fragment_sent().is_empty());
+
         // Send fragments to the server
         for fragment in fragments.clone() {
             let packet = Packet::new_fragment(routing_header.clone(), session_id, fragment);
             server.handle_received_packet(Ok(packet));
         }
 
-        // Check that all the fragments are added to the list of sent fragment,
-        // with the right session_id
-        assert!(server.fragment_sent().contains_key(&session_id));
-        assert_eq!(total_fragments, server.fragment_sent().get(&session_id).unwrap().len());
+        // Check the fragment of the response are added to the list of fragment sent
+        assert!(!server.fragment_sent().is_empty());
 
-        // Create a mock ACK from the client and send it to the server
-        for fragment in fragments {
+        // Send ACK to the server for each fragment
+        for fragment in fragments.clone() {
             let ack = Packet::new_ack(
                 routing_header.clone(),
                 session_id,
@@ -105,8 +105,185 @@ pub mod ack_nack_tests {
             server.handle_received_packet(Ok(ack));
         }
 
-        // Check that the list should not contain the same session id
-        assert!(!server.fragment_sent().contains_key(&session_id))
+        // Check the fragment are removed
+        // Should be empty since a session is removed if no more fragments are present
+        assert!(server.fragment_sent().is_empty());
     }
 
+    #[test]
+    fn should_handle_ack_multiple_packets() {
+        let mut rng = rand::thread_rng();
+        let (
+            mut server,
+            recv2,
+            recv3,
+            sc_recv
+        ) = init_test_network();
+
+        // Add fake nodes to the topology
+        server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
+        let mut disassembler = Disassembler::new();
+
+        // Create a mock routing header for the packet, coming from the node 8
+        let routing_header = SourceRoutingHeader::new(
+            vec![8, 7, 3, 1],
+            3
+        );
+
+        // SEND FIRST MESSAGE
+        let session_id_1: u64 = rng.gen();
+        let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
+        let fragments_1 = disassembler.disassemble_message(
+            request.stringify().into_bytes(),
+            session_id_1
+        );
+        let total_fragments = fragments_1.len();
+
+        // Send fragments to the server
+        for fragment in fragments_1.clone() {
+            let packet = Packet::new_fragment(routing_header.clone(), session_id_1, fragment);
+            server.handle_received_packet(Ok(packet));
+        }
+
+        // SEND SECOND MESSAGE
+        let session_id_2: u64 = rng.gen();
+        let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
+        let fragments_2 = disassembler.disassemble_message(
+            request.stringify().into_bytes(),
+            session_id_2
+        );
+        let total_fragments = fragments_2.len();
+
+        // Send fragments to the server
+        for fragment in fragments_2.clone() {
+            let packet = Packet::new_fragment(routing_header.clone(), session_id_2, fragment);
+            server.handle_received_packet(Ok(packet));
+        }
+
+
+        // Check the fragment of the response are added to the list of fragment sent
+        assert!(!server.fragment_sent().is_empty());
+        // Check there are 2 different entries
+        assert_eq!(2, server.fragment_sent().keys().len());
+
+        // Send ACK to the server for each fragment of the first message
+        for fragment in fragments_1.clone() {
+            let ack = Packet::new_ack(
+                routing_header.clone(),
+                session_id_1,
+                fragment.fragment_index
+            );
+            server.handle_received_packet(Ok(ack));
+        }
+
+        // Check that only the fragment of the first message are removed
+        assert_eq!(1, server.fragment_sent().keys().len());
+        assert!(server.fragment_sent().contains_key(&session_id_2));
+
+        // Send ACK to the server for each fragment of the second message
+        for fragment in fragments_2.clone() {
+            let ack = Packet::new_ack(
+                routing_header.clone(),
+                session_id_2,
+                fragment.fragment_index
+            );
+            server.handle_received_packet(Ok(ack));
+        }
+        assert!(server.fragment_sent().is_empty());
+    }
+
+    #[test]
+    fn should_handle_ack_wrong_session_id() {
+        let (
+            mut server,
+            recv2,
+            recv3,
+            sc_recv
+        ) = init_test_network();
+        let session_id: u64 = 12345;
+
+        // Add fake nodes to the topology
+        server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
+
+        // Create a mock request, using ServerType so the server sends a response back to the client
+        let mut disassembler = Disassembler::new();
+        let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
+        let fragments = disassembler.disassemble_message(
+            request.stringify().into_bytes(),
+            session_id
+        );
+
+        // Create a mock routing header for the packet, coming from the node 8
+        let routing_header = SourceRoutingHeader::new(
+            vec![8, 7, 3, 1],
+            3
+        );
+        let total_fragments = fragments.len();
+
+        // Send fragments to the server
+        for fragment in fragments.clone() {
+            let packet = Packet::new_fragment(routing_header.clone(), session_id, fragment);
+            server.handle_received_packet(Ok(packet));
+        }
+
+        let wrong_ses_id = 67890;
+        // Send ACK to the server for each fragment
+        for fragment in fragments.clone() {
+            let ack = Packet::new_ack(
+                routing_header.clone(),
+                wrong_ses_id,
+                fragment.fragment_index
+            );
+            server.handle_received_packet(Ok(ack));
+        }
+
+        // Check the fragment are not removed
+        assert_eq!(1, server.fragment_sent().keys().len());
+        assert!(server.fragment_sent().contains_key(&session_id));
+    }
+
+    #[test]
+    fn should_handle_ack_wrong_fragment_id() {
+        let mut rng = rand::thread_rng();
+        let (
+            mut server,
+            recv2,
+            recv3,
+            sc_recv
+        ) = init_test_network();
+        let session_id: u64 = rng.gen();
+
+        // Add fake nodes to the topology
+        server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
+
+        // Create a mock request, using ServerType so the server sends a response back to the client
+        let mut disassembler = Disassembler::new();
+        let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
+        let fragments = disassembler.disassemble_message(
+            request.stringify().into_bytes(),
+            session_id
+        );
+
+        // Create a mock routing header for the packet, coming from the node 8
+        let routing_header = SourceRoutingHeader::new(
+            vec![8, 7, 3, 1],
+            3
+        );
+        let total_fragments = fragments.len();
+
+        // Send fragments to the server
+        for fragment in fragments.clone() {
+            let packet = Packet::new_fragment(routing_header.clone(), session_id, fragment);
+            server.handle_received_packet(Ok(packet));
+        }
+
+        // Send ACK to the server for the wrong fragment_id
+        let fragment_index: u64 = (total_fragments + 50) as u64;
+        let ack = Packet::new_ack(routing_header.clone(), session_id, fragment_index);
+        server.handle_received_packet(Ok(ack));
+
+        // Check that no fragment is removed
+        assert!(!server.fragment_sent().is_empty());
+        assert!(!server.fragment_sent().get(&session_id).unwrap().is_empty())
+    }
 }

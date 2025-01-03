@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use crossbeam_channel::{select_biased, Receiver, RecvError, SendError, Sender};
+use crossbeam_channel::{select_biased, Receiver, RecvError, Sender};
 use rand::Rng;
 use rustafarian_shared::assembler::assembler::Assembler;
 use rustafarian_shared::assembler::disassembler::Disassembler;
