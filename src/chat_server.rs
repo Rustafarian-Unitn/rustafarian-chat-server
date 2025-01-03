@@ -10,7 +10,7 @@ use wg_2024::network::{NodeId, SourceRoutingHeader};
 use wg_2024::packet::{Ack, FloodRequest, FloodResponse, Fragment, Nack, NackType, NodeType, Packet, PacketType};
 use rustafarian_shared::messages::chat_messages::{ChatRequest, ChatRequestWrapper, ChatResponse, ChatResponseWrapper};
 use rustafarian_shared::messages::general_messages::{DroneSend, ServerType, ServerTypeResponse};
-use rustafarian_shared::TIMEOUT_BETWEEN_FLOODS_MS;
+use rustafarian_shared::TIMEOUT_TIMER_MS;
 use crate::chat_server::LogLevel::{DEBUG, ERROR, INFO};
 
 /// Used in the log method
@@ -1134,7 +1134,7 @@ impl ChatServer {
     /// the last flood starting timestamp + a shared timeout
     pub fn can_flood(&self) -> bool {
         let now = Utc::now();
-        now.timestamp_millis() > self.last_flood_timestamp + TIMEOUT_BETWEEN_FLOODS_MS as i64
+        now.timestamp_millis() > self.last_flood_timestamp + TIMEOUT_TIMER_MS as i64
     }
 
     pub fn fragment_retry_queue(&self) -> &HashSet<(u64, u64)> { &self.fragment_retry_queue }
