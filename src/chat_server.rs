@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use chrono::{Utc};
 use crossbeam_channel::{select_biased, Receiver, RecvError, Sender};
 use rand::Rng;
 use rustafarian_shared::assembler::assembler::Assembler;
@@ -9,6 +10,7 @@ use wg_2024::network::{NodeId, SourceRoutingHeader};
 use wg_2024::packet::{Ack, FloodRequest, FloodResponse, Fragment, Nack, NackType, NodeType, Packet, PacketType};
 use rustafarian_shared::messages::chat_messages::{ChatRequest, ChatRequestWrapper, ChatResponse, ChatResponseWrapper};
 use rustafarian_shared::messages::general_messages::{DroneSend, ServerType, ServerTypeResponse};
+use rustafarian_shared::TIMEOUT_BETWEEN_FLOODS_MS;
 use crate::chat_server::LogLevel::{DEBUG, ERROR, INFO};
 
 /// Used in the log method
@@ -44,9 +46,10 @@ pub struct ChatServer {
     assembler: Assembler,
     disassembler: Disassembler,
     current_flood_id: u64,
-    // Flag to identify if a flood is currently in progress, is set to false once a flood response
-    // is received. Used to mitigate network load
-    is_flooding: bool,
+
+    // Timestamp when the last flood has begun, used to understand if the server can start a new one
+    // based on the shared timeout
+    last_flood_timestamp: i64,
     debug: bool // Debug flag, if true print verbose info
 }
 
@@ -73,7 +76,7 @@ impl ChatServer {
             assembler: Assembler::new(),
             disassembler: Disassembler::new(),
             current_flood_id: 0,
-            is_flooding: false,
+            last_flood_timestamp: 0,
             debug
         }
     }
@@ -272,8 +275,9 @@ impl ChatServer {
 
         // Add tuple to list in order to retry and send the fragment
         self.fragment_retry_queue.insert((session_id, fragment_id));
+
         // If no flood is currently in process, start a new one to update the topology
-        if !self.is_flooding { self.start_flooding() }
+        self.start_flooding()
     }
 
     /// Method that handles the reception of a flood_request, currently update the path trace
@@ -427,8 +431,6 @@ impl ChatServer {
                 }
             }
         }
-        // Change the current state to false, since we received at least one flood response
-        self.is_flooding = false;
 
         // Resend fragment if any are present in the queue
         if !self.fragment_retry_queue.is_empty() { self.resend_fragments(); }
@@ -749,7 +751,7 @@ impl ChatServer {
                     .or_insert_with(Vec::new)
                     .push(packet.clone());
             }
-            if !self.is_flooding { self.start_flooding(); }
+            self.start_flooding();
         } else {
             self.log(
                 format!(
@@ -896,7 +898,7 @@ impl ChatServer {
         self.log("Starting a new flooding", INFO);
 
         // Check if server is waiting on an old flood
-        if self.is_flooding {
+        if !self.can_flood() {
             self.log("Server is already waiting on a flood", INFO);
             return;
         }
@@ -921,10 +923,7 @@ impl ChatServer {
                       DEBUG
                     );
 
-                    // Set the flag here, since if no flood_request is successfully sent, but
-                    // the flag is already set to true, than the server could starve waiting
-                    // for a flood_response
-                    self.is_flooding = true;
+                    self.last_flood_timestamp = Utc::now().timestamp_millis();
                 }
                 Err(e) => {
                     self.log(
@@ -996,7 +995,7 @@ impl ChatServer {
                             ERROR
                         );
 
-                        if !self.is_flooding { self.start_flooding(); }
+                        self.start_flooding();
                         continue;
                     }
 
@@ -1131,7 +1130,12 @@ impl ChatServer {
 
     pub fn fragment_sent(&self) -> &HashMap<u64, Vec<Packet>> { &self.fragment_sent }
 
-    pub fn is_flooding(&self) -> &bool { &self.is_flooding }
+    /// Return true if the current timestamp is grater than
+    /// the last flood starting timestamp + a shared timeout
+    pub fn can_flood(&self) -> bool {
+        let now = Utc::now();
+        now.timestamp_millis() > self.last_flood_timestamp + TIMEOUT_BETWEEN_FLOODS_MS as i64
+    }
 
     pub fn fragment_retry_queue(&self) -> &HashSet<(u64, u64)> { &self.fragment_retry_queue }
 }

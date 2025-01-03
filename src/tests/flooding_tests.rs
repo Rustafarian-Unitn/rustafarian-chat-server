@@ -131,7 +131,7 @@ pub mod flooding_tests {
         server.handle_received_packet(Ok(flood_response));
 
         // Check that the server correctly updated the flood status
-        assert!(!server.is_flooding());
+        assert!(server.can_flood());
 
         // Assert the topology is correctly updated
         // NODES

@@ -329,7 +329,7 @@ pub mod ack_nack_tests {
         // Check the fragment of the response are added to the list of fragment sent
         assert!(!server.fragment_sent().is_empty());
         // Check the server is not currently flooding
-        assert!(!server.is_flooding());
+        assert!(server.can_flood());
 
         // Remove any packet in the channels, to avoid problems
         // on the assertions for the flood request
@@ -363,7 +363,7 @@ pub mod ack_nack_tests {
         }
 
         // Check the server has started a new flood
-        assert!(server.is_flooding());
+        assert!(!server.can_flood());
         
         let fr1 = recv2.recv().unwrap();
         let fr2 = recv3.recv().unwrap();
@@ -429,7 +429,7 @@ pub mod ack_nack_tests {
         // Check the fragment of the response are added to the list of fragment sent
         assert!(!server.fragment_sent().is_empty());
         // Check the server is not currently flooding
-        assert!(!server.is_flooding());
+        assert!(server.can_flood());
 
         // Remove any packet in the channels, to avoid problems
         // on the assertions for the flood request
@@ -454,7 +454,7 @@ pub mod ack_nack_tests {
         assert!(server.fragment_retry_queue().is_empty());
 
         // Check the server has not started a new flood
-        assert!(!server.is_flooding());
+        assert!(server.can_flood());
 
         while let Ok(response) = recv3.try_recv() {
 
