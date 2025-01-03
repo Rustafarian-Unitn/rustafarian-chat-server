@@ -429,6 +429,9 @@ impl ChatServer {
         }
         // Change the current state to false, since we received at least one flood response
         self.is_flooding = false;
+
+        // Resend fragment if any are present in the queue
+        if !self.fragment_retry_queue.is_empty() { self.resend_fragments(); }
     }
 
     /// Handle request from the clients
@@ -731,9 +734,17 @@ impl ChatServer {
                 // Add to retry queue
                 self.fragment_retry_queue.insert((session_id, fragment.fragment_index));
 
+
+                // Create a new header with only the destination_node in the route, this way
+                // when resending the packet the server knows the destination
+                let header = SourceRoutingHeader::new(
+                    vec![destination_node],
+                    0
+                );
+
                 // Create a packet for each fragment and save it in the server memory, used when
                 // the fragment will be re-handled later
-                let packet = Packet::new_fragment(header.clone(), session_id, fragment);
+                let packet = Packet::new_fragment(header, session_id, fragment);
                 self.fragment_sent.entry(session_id)
                     .or_insert_with(Vec::new)
                     .push(packet.clone());
@@ -959,15 +970,28 @@ impl ChatServer {
 
                     // Compute new route, this way if a flood response has updated the topology
                     // the packet should avoid the previous error
-                    let destination_id = packet.routing_header.destination().unwrap();
+                    let destination_id = packet.routing_header.destination();
+                    if destination_id.is_none() {
+                        self.log(
+                            format!(
+                                "No destination found for the fragment [{}] in session [{}]",
+                                fragment_id,
+                                session_id
+                            ).as_str(),
+                            ERROR
+                        );
+                        continue;
+                    }
+
                     let source_header = self.topology.get_routing_header(
                         self.id,
-                        destination_id
+                        destination_id.unwrap()
                     );
                     if source_header.is_empty() {
                         self.log(
                             format!(
-                                "No route was computed to destination node [{}]", destination_id
+                                "No route was computed to destination node [{}]",
+                                destination_id.unwrap()
                             ).as_str(),
                             ERROR
                         );
@@ -1071,9 +1095,6 @@ impl ChatServer {
                     self.handle_received_packet(packet);
                 }
             }
-
-            // Resend fragment if any are present in the queue
-            if !self.fragment_retry_queue.is_empty() { self.resend_fragments(); }
         }
     }
 
@@ -1111,4 +1132,6 @@ impl ChatServer {
     pub fn fragment_sent(&self) -> &HashMap<u64, Vec<Packet>> { &self.fragment_sent }
 
     pub fn is_flooding(&self) -> &bool { &self.is_flooding }
+
+    pub fn fragment_retry_queue(&self) -> &HashSet<(u64, u64)> { &self.fragment_retry_queue }
 }
