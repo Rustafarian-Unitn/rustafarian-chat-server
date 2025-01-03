@@ -1073,7 +1073,7 @@ impl ChatServer {
             }
 
             // Resend fragment if any are present in the queue
-            if !self.fragment_retry_queue.is_empty() { self.resend_fragments(); }
+            // if !self.fragment_retry_queue.is_empty() { self.resend_fragments(); }
         }
     }
 
