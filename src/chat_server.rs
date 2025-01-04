@@ -1114,7 +1114,8 @@ impl ChatServer {
 
         // Add edges between the two nodes, if not exists
         for edge in edges {
-            if !self.topology.edges().get(&edge.0).unwrap().contains(&edge.1) {
+            if !self.topology.edges().contains_key(&edge.0) ||
+            !self.topology.edges().get(&edge.0).unwrap().contains(&edge.1) {
                 self.topology.add_edge(edge.0, edge.1);
                 self.topology.add_edge(edge.1, edge.0);
             }

@@ -2,9 +2,15 @@
 #[allow(unused_imports, unreachable_code, unused_variables)]
 pub mod flooding_tests {
     use std::collections::HashMap;
+    use std::thread::sleep;
+    use std::time::Duration;
     use crossbeam_channel::{unbounded, Receiver, Sender};
     use rand::{Rng};
+    use rustafarian_shared::assembler::disassembler::Disassembler;
+    use rustafarian_shared::messages::chat_messages::ChatRequestWrapper;
     use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerResponseWrapper};
+    use rustafarian_shared::messages::general_messages::{DroneSend, ServerTypeRequest};
+    use rustafarian_shared::TIMEOUT_BETWEEN_FLOODS_MS;
     use wg_2024::network::{NodeId, SourceRoutingHeader};
     use wg_2024::packet::{FloodRequest, FloodResponse, Packet, PacketType};
     use wg_2024::packet::NodeType::{Client, Drone, Server};
@@ -193,4 +199,50 @@ pub mod flooding_tests {
         assert_eq!(4, recv_2.routing_header.hop_index);
     }
 
+    #[test]
+    fn should_not_flood_flood_timeout() {
+        let mut rng = rand::thread_rng();
+        let (
+            mut server,
+            recv2,
+            recv3,
+            sc_recv
+        ) = init_test_network();
+        let session_id: u64 = rng.gen();
+
+        // Add fake nodes to the topology
+        server.update_topology(vec![7, 8], vec![(3, 7)]);
+
+
+        // Create a mock request, from a client which is not connected, to start a new flood
+        let mut disassembler = Disassembler::new();
+        let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
+        let fragments = disassembler.disassemble_message(
+            request.stringify().into_bytes(),
+            session_id
+        );
+        // Create a mock routing header for the packet, coming from the node 8
+        let routing_header = SourceRoutingHeader::new(
+            vec![8, 7, 3, 1],
+            3
+        );
+
+        // Server should be able to flood now, since the start method is not called, the server
+        // shouldn't have any flood active
+        assert!(server.can_flood());
+
+        // Send fragments to the server
+        for fragment in fragments.clone() {
+            let packet = Packet::new_fragment(routing_header.clone(), session_id, fragment);
+            server.handle_received_packet(Ok(packet));
+        }
+
+        // Here the server shouldn't be able to flood, since a new request will start once
+        // the server finds no route to the destination node (8)
+        assert!(!server.can_flood());
+
+        // Check that after the timeout + a small delta the server is once again able to start a flood
+        sleep(Duration::from_millis(TIMEOUT_BETWEEN_FLOODS_MS + 50));
+        assert!(server.can_flood());
+    }
 }
