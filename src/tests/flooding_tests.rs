@@ -101,11 +101,8 @@ pub mod flooding_tests {
         let mut rng = rand::thread_rng();
         let (mut server, recv2, recv3, _) = init_test_network();
         let session_id: u64 = rng.gen();
+        let flood_id: u64 = rng.gen();
 
-        // Since the server initializes the current flood_id to zero, this is also set to zero
-        // If no other flood request is created this should not rise a problem in the tests
-        // A little sketchy, but it works
-        let flood_id: u64 = 0;
         let flood_request = FloodRequest {
             flood_id,
             initiator_id: 8,

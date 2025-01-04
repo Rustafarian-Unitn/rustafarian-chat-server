@@ -2,6 +2,8 @@
 #[allow(unused_imports, unreachable_code, unused_variables)]
 pub mod ack_nack_tests {
     use std::collections::HashMap;
+    use std::thread::sleep;
+    use std::time::Duration;
     use crossbeam_channel::{unbounded, Receiver, Sender};
     use rand::{Rng};
     use rustafarian_shared::assembler::assembler::Assembler;
@@ -9,8 +11,10 @@ pub mod ack_nack_tests {
     use rustafarian_shared::messages::chat_messages::{ChatRequest, ChatRequestWrapper, ChatResponse, ChatResponseWrapper};
     use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerResponseWrapper};
     use rustafarian_shared::messages::general_messages::{DroneSend, ServerTypeRequest};
+    use rustafarian_shared::TIMEOUT_BETWEEN_FLOODS_MS;
     use wg_2024::network::{NodeId, SourceRoutingHeader};
-    use wg_2024::packet::{FloodRequest, Fragment, Nack, NackType, Packet, PacketType};
+    use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, Nack, NackType, Packet, PacketType};
+    use wg_2024::packet::NodeType::{Client, Drone, Server};
     use crate::chat_server::ChatServer;
 
     /// Init a test ChatServer with 2 drones connected to it
@@ -301,6 +305,8 @@ pub mod ack_nack_tests {
         // Add fake nodes to the topology
         server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
 
+        // <== SEND A MESSAGE TO THE SERVER ==>
+
         // Create a mock request, using ServerType so the server sends a response back to the client
         let mut disassembler = Disassembler::new();
         let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
@@ -331,13 +337,25 @@ pub mod ack_nack_tests {
         // Check the server is not currently flooding
         assert!(server.can_flood());
 
+        // <== INTERCEPT RESPONSE AND SEND NACK ==>
+
         // Remove any packet in the channels, to avoid problems
         // on the assertions for the flood request
         while let Ok(_) = recv2.try_recv() {}
-        while let Ok(_) = recv3.try_recv() {}
 
-        // Send NACK to the server for each fragment
-        for fragment in fragments.clone() {
+        // Add response fragments to a list and send a NACK
+        let mut resp_fragments: Vec<Fragment> = Vec::new();
+        while let Ok(response) = recv3.try_recv() {
+
+            match response.pack_type {
+                PacketType::MsgFragment(fragment) => {
+                    resp_fragments.push(fragment);
+                }
+                _ => {}
+            }
+        }
+
+        for fragment in resp_fragments.clone() {
             let nack = Packet::new_nack(
                 routing_header.clone(),
                 session_id,
@@ -362,9 +380,11 @@ pub mod ack_nack_tests {
             );
         }
 
+        // <== SERVER START FLOOD AND AWAIT A RESPONSE ==>
+
         // Check the server has started a new flood
         assert!(!server.can_flood());
-        
+
         let fr1 = recv2.recv().unwrap();
         let fr2 = recv3.recv().unwrap();
 
@@ -383,6 +403,44 @@ pub mod ack_nack_tests {
             }
             _ => {
                 panic!("Wrong packet type for drone 3");
+            }
+        }
+
+        // Create a mock flood response, simulating a response from the flood
+        let flood_id: u64 = rng.gen();
+        let flood_request = FloodRequest {
+            flood_id,
+            initiator_id: 8,
+            path_trace: vec![(1, Server), (3, Drone), (7, Drone), (8, Client)],
+        };
+
+        // Compute the route, used to send the response back through the network
+        let mut route: Vec<u8> = flood_request.path_trace
+            .iter()
+            .map(|node| node.0)
+            .collect();
+        route.reverse();
+
+        let flood_response = Packet::new_flood_response(
+            SourceRoutingHeader::new(route, 3),
+            session_id,
+            FloodResponse {
+                flood_id,
+                path_trace: flood_request.path_trace
+            }
+        );
+        server.handle_received_packet(Ok(flood_response));
+
+        // <== SERVER RE-SEND FRAGMENTS ==>
+
+        let resend_packet = recv3.recv().unwrap();
+        assert_eq!(session_id, resend_packet.session_id);
+        match resend_packet.pack_type {
+            PacketType::MsgFragment(fragment) => {
+                assert_eq!(*resp_fragments.get(fragment.fragment_index as usize).unwrap(), fragment);
+            }
+            _ => {
+                panic!("Was expecting MsgFragment as packet type")
             }
         }
     }
