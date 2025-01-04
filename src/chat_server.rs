@@ -364,9 +364,10 @@ impl ChatServer {
 
             self.log(
                 "<- Received a flood response, but the server is not the initiator.\
-                Sending it along the network",
+                Updating the topology and sending it along the network",
                 INFO
             );
+
             // Check if the server is the right receiver, if so advance the hop index and send it
             let current_node = packet.routing_header.current_hop().unwrap();
             if current_node == self.id {
@@ -383,21 +384,17 @@ impl ChatServer {
                     ERROR
                 );
             }
-
-            return;
+        } else {
+            self.log("<- New flood response received, updating topology", INFO);
         }
 
-        // Only handle flood responses if they have the current id, to avoid updating the topology
-        // with older information
         if flood_response.flood_id != self.current_flood_id {
             self.log(
-                "<- Received a flood response with a wrong id, ignoring it",
-                INFO
+                "<- Received a flood response with an id different from the current one",
+                DEBUG
             );
-            return;
         }
 
-        self.log("<- New flood response received, updating topology", INFO);
         for (i, node) in flood_response.path_trace.iter().enumerate() {
 
             // Check if node is already in the topology, if not add it
@@ -895,13 +892,13 @@ impl ChatServer {
     /// Initiate a new flooding sequence, checking if the server is not waiting on a flood response
     fn start_flooding(&mut self) {
 
-        self.log("Starting a new flooding", INFO);
-
         // Check if server is waiting on an old flood
         if !self.can_flood() {
             self.log("Server is already waiting on a flood", INFO);
             return;
         }
+
+        self.log("Starting a new flooding", INFO);
 
         let mut rng = rand::thread_rng();
         // Generate new random flood_id and set it as the current id in the server
