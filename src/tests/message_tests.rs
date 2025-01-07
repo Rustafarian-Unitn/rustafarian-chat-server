@@ -13,10 +13,6 @@ pub mod message_test {
     use wg_2024::packet::{Fragment, Packet, PacketType};
     use crate::chat_server::ChatServer;
 
-    /// Init a test ChatServer with 2 drones connected to it
-    ///
-    /// # Return
-    /// Returns the init server and receiver for the drones and sim controller
     fn init_test_network() -> (
         ChatServer,
         Receiver<Packet>,

@@ -10,10 +10,6 @@ pub mod sc_command_tests {
     use wg_2024::packet::NodeType::{Client, Drone, Server};
     use crate::chat_server::ChatServer;
 
-    /// Init a test ChatServer with 2 drones connected to it
-    ///
-    /// # Return
-    /// Returns the init server
     fn init_test_network() -> (ChatServer, Receiver<SimControllerResponseWrapper>) {
 
         // NEIGHBOURS CHANNELS
@@ -90,11 +86,14 @@ pub mod sc_command_tests {
         // Check the topology has been updated
         let topology = server.topology();
 
-        assert_eq!(1, topology.nodes().len());
-        assert!(!topology.nodes().contains(&node_id));
+        // Topology should still contain the new node, but there should not be any edges
+        // between the node and the server
+        assert_eq!(2, topology.nodes().len());
+        assert!(topology.nodes().contains(&node_id));
 
         // Check there is an edge between the node and the server and vice versa
-        assert!(!topology.edges().contains_key(&node_id));
+        assert!(topology.edges().contains_key(&node_id));
+        assert!(!topology.edges().get(&node_id).unwrap().contains(&1));
         assert!(!topology.edges().get(&1).unwrap().contains(&node_id));
     }
 

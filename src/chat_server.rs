@@ -646,11 +646,11 @@ impl ChatServer {
 
         if self.node_senders.contains_key(&node_id) {
             self.node_senders.remove(&node_id);
-            self.topology.remove_node(node_id);
+            self.topology.remove_edges(self.id, node_id);
 
             self.log(
                 format!(
-                    "Node with id [{}] successfully removed",
+                    "Node with id [{}] successfully removed from neighbours",
                     node_id
                 ).as_str(),
                 INFO

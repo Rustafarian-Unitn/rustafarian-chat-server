@@ -16,10 +16,7 @@ pub mod flooding_tests {
     use wg_2024::packet::NodeType::{Client, Drone, Server};
     use crate::chat_server::ChatServer;
 
-    /// Init a test ChatServer with 2 drones connected to it
-    ///
-    /// # Return
-    /// Returns the init server
+
     fn init_test_network() -> (
         ChatServer,
         Receiver<Packet>,
