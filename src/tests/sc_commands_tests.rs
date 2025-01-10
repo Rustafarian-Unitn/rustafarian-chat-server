@@ -110,6 +110,9 @@ pub mod sc_command_tests {
         let command = SimControllerCommand::AddSender(node_id, node3_channel.0);
         server.handle_controller_commands(Ok(command));
 
+        // Read the flood_request_sent event
+        sc_recv.recv().unwrap();
+
         let command = SimControllerCommand::Topology;
         server.handle_controller_commands(Ok(command));
 

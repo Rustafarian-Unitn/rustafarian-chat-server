@@ -8,6 +8,6 @@ wg_2024 = { git = "https://github.com/WGL-2024/WGL_repo_2024.git", features = ["
 crossbeam="0.8"
 crossbeam-channel="0.5"
 rand = { version = "0.8" }
-#rustafarian-shared = { git = "https://github.com/Rustafarian-Unitn/rustafarian-shared", branch = "pdr-mapping"}
-rustafarian-shared = { path = "../rustafarian-shared" }
+rustafarian-shared = { git = "https://github.com/Rustafarian-Unitn/rustafarian-shared"}
+#rustafarian-shared = { path = "../rustafarian-shared" }
 chrono = "0.4"
