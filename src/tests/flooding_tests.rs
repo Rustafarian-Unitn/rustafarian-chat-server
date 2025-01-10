@@ -185,9 +185,6 @@ pub mod flooding_tests {
 
         server.handle_received_packet(Ok(flood_response));
 
-        // Check Sim Controller is notified
-        assert!(sc_receiver.try_recv().is_ok());
-
         // Check the response is forwarded to the right node
         let recv_2 = recv2.recv().unwrap();
         // Assert they are the same request, with same session id

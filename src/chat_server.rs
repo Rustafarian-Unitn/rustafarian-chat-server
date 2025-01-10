@@ -712,6 +712,24 @@ impl ChatServer {
             INFO
         );
 
+        // If packet sent correctly notify Simulation Controller
+        match self.sim_controller_send.send(
+            SimControllerResponseWrapper::Event( SimControllerEvent::MessageSent {session_id} )) {
+
+            Ok(_) => {
+                self.log("MessageSent event successfully delivered to Simulation Controller", DEBUG);
+            }
+            Err(e) => {
+                self.log(
+                    format!(
+                        "Error while sending MessageSent event to Simulation Controller - error [{:?}]",
+                        e
+                    ).as_str(),
+                    ERROR
+                );
+            }
+        }
+
         let fragments = self
             .disassembler
             .disassemble_message(message.as_bytes().to_vec(), session_id);
@@ -816,30 +834,6 @@ impl ChatServer {
                             ).as_str(),
                             INFO
                         );
-
-                        // If packet sent correctly notify Simulation Controller
-                        match self.sim_controller_send.send(
-                            SimControllerResponseWrapper::Event(
-                                SimControllerEvent::PacketSent {
-                                    session_id,
-                                    packet_type: packet_type.to_string()
-                                }
-                            )
-                        ) {
-
-                            Ok(_) => {
-                                self.log("PacketSent event successfully delivered to Simulation Controller", DEBUG);
-                            }
-                            Err(e) => {
-                                self.log(
-                                    format!(
-                                        "Error while sending PacketSent event to Simulation Controller - error [{:?}]",
-                                        e
-                                    ).as_str(),
-                                    ERROR
-                                );
-                            }
-                        }
                     }
 
                     Err(e) => {

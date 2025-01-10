@@ -96,21 +96,6 @@ pub mod message_test {
             }
             _ => { !panic!("Unexpected packet type"); }
         }
-
-        // Check that the event sent to the sim controller is correct
-        let SimControllerResponseWrapper::Event(sim_event) = sc_recv.recv().unwrap()
-        else { !panic!("Unexpected event type"); };
-
-        match sim_event {
-
-            SimControllerEvent::PacketSent {
-                    session_id: event_session_id,
-                    packet_type: _
-            } => {
-                assert_eq!(session_id, event_session_id);
-            }
-            _ => { !panic!("Unexpected controller event type"); }
-        }
     }
 
     // SERVER FUNCTIONALITIES
@@ -187,6 +172,20 @@ pub mod message_test {
             }
             _ => { !panic!("Unexpected packet type, was expecting MsgFragment"); }
         }
+
+        // Check that the server notify when a message is sent ti te Simulation Controller
+        let SimControllerResponseWrapper::Event(sim_event) = sc_recv.recv().unwrap()
+        else { !panic!("Unexpected event type"); };
+
+        match sim_event {
+
+            SimControllerEvent::MessageSent {
+                session_id: event_session_id
+            } => {
+                assert_eq!(session_id, event_session_id);
+            }
+            _ => { !panic!("Unexpected controller event type"); }
+        }
     }
 
     #[test]
@@ -254,6 +253,20 @@ pub mod message_test {
                 }
             }
             _ => { !panic!("Unexpected packet type, was expecting MsgFragment"); }
+        }
+
+        // Check that the server notify when a message is sent ti te Simulation Controller
+        let SimControllerResponseWrapper::Event(sim_event) = sc_recv.recv().unwrap()
+        else { !panic!("Unexpected event type"); };
+
+        match sim_event {
+
+            SimControllerEvent::MessageSent {
+                session_id: event_session_id
+            } => {
+                assert_eq!(session_id, event_session_id);
+            }
+            _ => { !panic!("Unexpected controller event type"); }
         }
     }
 
@@ -347,6 +360,20 @@ pub mod message_test {
                 }
             }
             _ => { !panic!("Unexpected packet type, was expecting MsgFragment"); }
+        }
+
+        // Check that the server notify when a message is sent ti te Simulation Controller
+        let SimControllerResponseWrapper::Event(sim_event) = sc_recv.recv().unwrap()
+        else { !panic!("Unexpected event type"); };
+
+        match sim_event {
+
+            SimControllerEvent::MessageSent {
+                session_id: event_session_id
+            } => {
+                assert_eq!(session_id, event_session_id);
+            }
+            _ => { !panic!("Unexpected controller event type"); }
         }
     }
 
@@ -512,6 +539,20 @@ pub mod message_test {
                 }
             }
             _ => { !panic!("Unexpected packet type, was expecting MsgFragment"); }
+        }
+
+        // Check that the server notify when a message is sent ti te Simulation Controller
+        let SimControllerResponseWrapper::Event(sim_event) = sc_recv.recv().unwrap()
+        else { !panic!("Unexpected event type"); };
+
+        match sim_event {
+
+            SimControllerEvent::MessageSent {
+                session_id: event_session_id
+            } => {
+                assert_eq!(session_id, event_session_id);
+            }
+            _ => { !panic!("Unexpected controller event type"); }
         }
     }
 }
