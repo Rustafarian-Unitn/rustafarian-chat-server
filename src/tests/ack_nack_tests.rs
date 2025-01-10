@@ -485,6 +485,9 @@ pub mod ack_nack_tests {
         // Check the server is not currently flooding
         assert!(server.can_flood());
 
+        // Check that the pdr for the node 3 is 0
+        assert_eq!(0, server.get_pdr_for_node(3));
+
         // Remove any packet in the channels, to avoid problems
         // on the assertions for the flood request
         while let Ok(_) = recv2.try_recv() {}
@@ -493,7 +496,10 @@ pub mod ack_nack_tests {
         // Send NACK to the server for each fragment
         for fragment in fragments.clone() {
             let nack = Packet::new_nack(
-                routing_header.clone(),
+                SourceRoutingHeader::new(
+                    vec![3, 1],
+                    1
+                ),
                 session_id,
                 Nack{
                     fragment_index: fragment.fragment_index,
@@ -509,6 +515,9 @@ pub mod ack_nack_tests {
 
         // Check the server has not started a new flood
         assert!(server.can_flood());
+
+        // Check that the history of the node 3 is updates, pdr should now be 1
+        assert_eq!(100, server.get_pdr_for_node(3));
 
         while let Ok(response) = recv3.try_recv() {
 

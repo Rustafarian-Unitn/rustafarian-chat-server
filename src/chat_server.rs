@@ -269,6 +269,7 @@ impl ChatServer {
 
         // Avoid starting a new flood if the packet has been dropped,
         if nack_type == NackType::Dropped {
+            self.topology.update_node_history(&vec![sender_id], true);
             self.send_packet(packet);
             return;
         }
@@ -635,6 +636,8 @@ impl ChatServer {
         self.node_senders.insert(node_id, sender);
         // Update the topology adding the current node, and an edge between the server and node
         self.update_topology(vec![node_id], vec![(self.id, node_id)]);
+
+        self.start_flooding();
     }
 
     /// Method that handles the RemoveSender command from Simulation Controller, removing the node
@@ -782,16 +785,19 @@ impl ChatServer {
         let packet_type = packet.pack_type.clone();
         let session_id = packet.session_id.clone();
 
-        if let PacketType::MsgFragment(_) =  packet_type.clone() {
-            self.fragment_sent.entry(session_id)
-                .or_insert_with(Vec::new)
-                .push(packet.clone());
-        }
-
         // If packet has empty route, abort
         if packet.routing_header.hops.is_empty() {
             self.log("Packet has an empty route, abort sending!", ERROR);
             return
+        }
+
+        if let PacketType::MsgFragment(_) =  packet_type.clone() {
+            self.fragment_sent.entry(session_id)
+                .or_insert_with(Vec::new)
+                .push(packet.clone());
+
+            // Only update history if packet is MsgFragment
+            self.topology.update_node_history(&packet.routing_header.hops, false);
         }
 
         // Send the packet to the next node in the route
@@ -1136,4 +1142,16 @@ impl ChatServer {
     }
 
     pub fn fragment_retry_queue(&self) -> &HashSet<(u64, u64)> { &self.fragment_retry_queue }
+
+    /// Return a vector of all nodes in the topology and their correspondent PDR
+    /// (for servers and clients should be 0)
+    pub fn get_pdr_for_topology(&mut self) -> Vec<(NodeId, u64)> {
+        let mut pdrs = Vec::new();
+
+        for node in self.topology.nodes().clone() {
+            pdrs.push((node, self.topology.pdr_for_node(node)));
+        }
+        pdrs
+    }
+    pub fn get_pdr_for_node(&mut self, node_id: NodeId) -> u64 {self.topology.pdr_for_node(node_id)}
 }
