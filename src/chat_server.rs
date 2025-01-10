@@ -6,19 +6,13 @@ use rustafarian_shared::assembler::assembler::Assembler;
 use rustafarian_shared::assembler::disassembler::Disassembler;
 use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerMessage, SimControllerResponseWrapper};
 use rustafarian_shared::topology::{Topology};
+use rustafarian_shared::logger::{Logger};
+use rustafarian_shared::logger::LogLevel::{ERROR, INFO, DEBUG};
 use wg_2024::network::{NodeId, SourceRoutingHeader};
 use wg_2024::packet::{Ack, FloodRequest, FloodResponse, Fragment, Nack, NackType, NodeType, Packet, PacketType};
 use rustafarian_shared::messages::chat_messages::{ChatRequest, ChatRequestWrapper, ChatResponse, ChatResponseWrapper};
 use rustafarian_shared::messages::general_messages::{DroneSend, ServerType, ServerTypeResponse};
 use rustafarian_shared::TIMEOUT_BETWEEN_FLOODS_MS;
-use crate::chat_server::LogLevel::{DEBUG, ERROR, INFO};
-
-/// Used in the log method
-/// * `INFO`: default log level, will always be printed
-/// * `DEBUG`: used only in debug situation, will not print if the debug flag is `false`
-/// * `ERROR`: will print the message to `io::stderr`
-enum LogLevel { INFO, DEBUG, ERROR }
-
 #[derive()]
 /// Server used to send messages between clients
 pub struct ChatServer {
@@ -50,7 +44,7 @@ pub struct ChatServer {
     // Timestamp when the last flood has begun, used to understand if the server can start a new one
     // based on the shared timeout
     last_flood_timestamp: i64,
-    debug: bool // Debug flag, if true print verbose info
+    logger: Logger
 }
 
 impl ChatServer {
@@ -77,7 +71,7 @@ impl ChatServer {
             disassembler: Disassembler::new(),
             current_flood_id: 0,
             last_flood_timestamp: 0,
-            debug
+            logger: Logger::new("Chat Server".to_string(), id, debug)
         }
     }
 
@@ -90,32 +84,32 @@ impl ChatServer {
                 "Error in the reception of a command from Simulation Controller - error: [{}]",
                 command.err().unwrap()
             );
-            self.log(log_msg.as_str(), ERROR);
+            self.logger.log(log_msg.as_str(), ERROR);
             return;
         }
 
-        self.log("<- Received new command from Simulation Controller", INFO);
+        self.logger.log("<- Received new command from Simulation Controller", INFO);
 
         let command = command.unwrap();
         match command {
             SimControllerCommand::AddSender(node_id, sender) => {
 
-                self.log("Received AddSender command from SC", DEBUG);
+                self.logger.log("Received AddSender command from SC", DEBUG);
                 self.handle_add_sender_command(node_id, sender);
             }
             SimControllerCommand::RemoveSender(node_id) => {
 
-                self.log("Received AddSender command from SC", DEBUG);
+                self.logger.log("Received AddSender command from SC", DEBUG);
                 self.handle_remove_sender_command(node_id);
             }
             SimControllerCommand::Topology => {
 
-                self.log("Received Topology command from SC", DEBUG);
+                self.logger.log("Received Topology command from SC", DEBUG);
                 self.handle_topology_command()
             }
 
             _ => {
-                self.log(
+                self.logger.log(
                     format!(
                         "Received an unexpected command from Simulation Controller, skip handling.\
                          Command: [{:?}]",
@@ -136,12 +130,12 @@ impl ChatServer {
                 "Error in the reception of a packet - packet error: [{}]",
                 packet.err().unwrap()
             );
-            self.log(log_msg.as_str(), ERROR);
+            self.logger.log(log_msg.as_str(), ERROR);
             return;
         }
 
         let packet = packet.unwrap();
-        self.log(
+        self.logger.log(
             format!("<- Received new packet of type [{}]", packet.pack_type).as_str(),
             INFO
         );
@@ -149,23 +143,23 @@ impl ChatServer {
         match packet.pack_type.clone() {
 
             PacketType::MsgFragment(fragment) => {
-                self.log("Received MsgFragment", DEBUG);
+                self.logger.log("Received MsgFragment", DEBUG);
                 self.handle_message_fragment(packet, fragment)
             }
             PacketType::Ack(ack) => {
-                self.log("Received ACK", DEBUG);
+                self.logger.log("Received ACK", DEBUG);
                 self.handle_ack(packet, ack);
             }
             PacketType::Nack(nack) => {
-                self.log("Received NACK", DEBUG);
+                self.logger.log("Received NACK", DEBUG);
                 self.handle_nack(packet, nack)
             }
             PacketType::FloodRequest(flood_request) => {
-                self.log("Received FloodRequest", DEBUG);
+                self.logger.log("Received FloodRequest", DEBUG);
                 self.handle_flood_request(packet, flood_request);
             }
             PacketType::FloodResponse(flood_response) => {
-                self.log("Received FloodResponse", DEBUG);
+                self.logger.log("Received FloodResponse", DEBUG);
                 self.handle_flood_response(packet, flood_response);
             }
         }
@@ -187,7 +181,7 @@ impl ChatServer {
         let fragment_id = fragment.fragment_index.clone();
         let sender_id = packet.routing_header.hops[0];
 
-        self.log(
+        self.logger.log(
             format!(
                 "<- New message fragment received - [Node: {}, Session: {}, Fragment: {}]",
                 sender_id,
@@ -206,7 +200,7 @@ impl ChatServer {
         if let Some(message) = self.assembler.add_fragment(fragment, session_id) {
 
             let message = String::from_utf8_lossy(&message).to_string();
-            self.log(format!("A complete message was formed: [{}]", message).as_str(), DEBUG);
+            self.logger.log(format!("A complete message was formed: [{}]", message).as_str(), DEBUG);
             self.handle_complete_message(message, session_id, sender_id);
         }
     }
@@ -223,7 +217,7 @@ impl ChatServer {
         let fragment_id = ack.fragment_index;
         let sender_id = packet.routing_header.hops[0];
 
-        self.log(format!("Received ACK from node [{}]", sender_id).as_str(), INFO);
+        self.logger.log(format!("Received ACK from node [{}]", sender_id).as_str(), INFO);
 
         // If there are fragments for the current session
         if let Some(fragments) = self.fragment_sent.get_mut(&session_id) {
@@ -244,7 +238,7 @@ impl ChatServer {
             if fragments.is_empty() { self.fragment_sent.remove(&session_id); }
         } else {
             // NO SESSION FOUND
-            self.log(format!("No session with id [{}] is registered", session_id).as_str(), DEBUG);
+            self.logger.log(format!("No session with id [{}] is registered", session_id).as_str(), DEBUG);
         }
     }
 
@@ -261,7 +255,7 @@ impl ChatServer {
         let nack_type = nack.nack_type;
         let sender_id = packet.routing_header.hops[0];
 
-        self.log(
+        self.logger.log(
             format!("Received NACK from node [{}], nack type [{:?}]", sender_id, nack_type)
                 .as_str(),
             INFO
@@ -294,7 +288,7 @@ impl ChatServer {
         // CASE 1 - Forward the flood request
         // Get the node that sent the request, so to avoid sending the request back to it
         let sender_id = flood_request.path_trace.last().unwrap().0;
-        self.log(format!("<- Flood request received from node [{}]", sender_id).as_str(), INFO);
+        self.logger.log(format!("<- Flood request received from node [{}]", sender_id).as_str(), INFO);
         flood_request.increment(self.id, NodeType::Server);
 
         // Create a new packet and forward it to all the neighbours, except the sender node
@@ -309,13 +303,13 @@ impl ChatServer {
                 match sender.send(new_flood_request.clone()) {
 
                     Ok(_) => {
-                        self.log(
+                        self.logger.log(
                             format!("-> Flood request correctly forwarded to node [{}]", id).as_str(),
                             DEBUG
                         );
                     }
                     Err(e) => {
-                        self.log(
+                        self.logger.log(
                             format!("An error occurred while sending a flood request - [{}]", e).as_str(),
                             ERROR
                         );
@@ -326,7 +320,7 @@ impl ChatServer {
 
         // CASE 2 - Terminate the flood, create a flood response
         // let sender_id = flood_request.path_trace.last().unwrap().0;
-        // self.log(format!("<- Flood request received from node [{}]", sender_id).as_str(), INFO);
+        // self.logger.log(format!("<- Flood request received from node [{}]", sender_id).as_str(), INFO);
         // flood_request.increment(self.id, NodeType::Server);
         //
         // // Get the reverse path, from the server to the initiator
@@ -343,7 +337,7 @@ impl ChatServer {
         // );
         //
         // // Send it back to the node that sent the flood_request
-        // self.log(
+        // self.logger.log(
         //     format!("-> Flood response sent to node [{}]", sender_id).as_str(),
         //     DEBUG
         // );
@@ -363,7 +357,7 @@ impl ChatServer {
         let initiator = flood_response.path_trace[0].0;
         if initiator != self.id {
 
-            self.log(
+            self.logger.log(
                 "<- Received a flood response, but the server is not the initiator.\
                 Updating the topology and sending it along the network",
                 INFO
@@ -377,7 +371,7 @@ impl ChatServer {
                 self.send_packet(packet);
             } else {
                 // TODO Should never happen (I think...), check
-                self.log(
+                self.logger.log(
                     format!(
                         "Server is not the right recipient, expecting node {}",
                         current_node
@@ -386,11 +380,11 @@ impl ChatServer {
                 );
             }
         } else {
-            self.log("<- New flood response received, updating topology", INFO);
+            self.logger.log("<- New flood response received, updating topology", INFO);
         }
 
         if flood_response.flood_id != self.current_flood_id {
-            self.log(
+            self.logger.log(
                 "<- Received a flood response with an id different from the current one",
                 DEBUG
             );
@@ -400,7 +394,7 @@ impl ChatServer {
 
             // Check if node is already in the topology, if not add it
             if !self.topology.nodes().contains(&node.0) {
-                self.log(format!("New node [{}] added to the list", node.0).as_str(), DEBUG);
+                self.logger.log(format!("New node [{}] added to the list", node.0).as_str(), DEBUG);
                 self.topology.add_node(node.0);
             }
 
@@ -416,7 +410,7 @@ impl ChatServer {
                     .unwrap()
                     .contains(&previous_node.0) {
 
-                    self.log(
+                    self.logger.log(
                         format!(
                             "Adding new edge between nodes [{}] and [{}]",
                             node.0,
@@ -452,7 +446,7 @@ impl ChatServer {
 
             Ok(req_wrapper) => {
 
-                self.log("Successfully deserialized the message", DEBUG);
+                self.logger.log("Successfully deserialized the message", DEBUG);
                 match req_wrapper {
 
                     ChatRequestWrapper::Chat(request) => {
@@ -467,7 +461,7 @@ impl ChatServer {
                                 // Check if the node to register is the same that initiated the
                                 // request, if not do nothing
                                 if node_id != destination_node {
-                                    self.log(
+                                    self.logger.log(
                                         format!(
                                             "Initiator id [{}] is not equal to the node id to register [{}]",
                                             destination_node,
@@ -500,7 +494,7 @@ impl ChatServer {
                 }
             }
             Err(e) => {
-                self.log(
+                self.logger.log(
                     format!("Error while deserializing message from string [{}]", e).as_str(),
                     ERROR
                 )
@@ -515,7 +509,7 @@ impl ChatServer {
     /// * `session_id: u64` - the session this message belongs to
     fn handle_client_list_request(&mut self, node_id: NodeId, session_id: u64) {
 
-        self.log(format!("<- Received request from [{}] to get client list", node_id).as_str(), INFO);
+        self.logger.log(format!("<- Received request from [{}] to get client list", node_id).as_str(), INFO);
 
         let response = ChatResponseWrapper::Chat(
             ChatResponse::ClientList(self.registered_clients.clone().into_iter().collect())
@@ -530,7 +524,7 @@ impl ChatServer {
     /// * `session_id: u64` - the session this message belongs to
     fn handle_register_request(&mut self, node_id: NodeId, session_id: u64) {
 
-        self.log(format!("New client [{}] registered!", node_id).as_str(), INFO);
+        self.logger.log(format!("New client [{}] registered!", node_id).as_str(), INFO);
         self.registered_clients.insert(node_id);
 
         // Send response once client is registered
@@ -555,7 +549,7 @@ impl ChatServer {
         message: String
     ) {
 
-        self.log(
+        self.logger.log(
             format!(
                 "-> Sending a message from client [{}] to client [{}]",
                 sender_id,
@@ -565,7 +559,7 @@ impl ChatServer {
         );
 
         if !self.registered_clients.contains(&receiver_id) {
-            self.log(
+            self.logger.log(
                 format!(
                     "Cannot send message to client [{}], it needs to be registered",
                     receiver_id
@@ -587,7 +581,7 @@ impl ChatServer {
         self.send_message(msg_response.stringify(), receiver_id, new_session_id);
 
         // Sending confirmation to the sender that the message has been sent
-        self.log(
+        self.logger.log(
             format!("-> Confirming message sent successfully to sender [{}]", sender_id).as_str(),
             DEBUG
         );
@@ -604,7 +598,7 @@ impl ChatServer {
     /// * `session_id: u64` - the session this message belongs to
     fn handle_server_type_request(&mut self, destination_node: NodeId, session_id: u64) {
 
-        self.log("Handling server type request", INFO);
+        self.logger.log("Handling server type request", INFO);
 
         // Send response with server type
         let response = ChatResponseWrapper::ServerType(
@@ -624,12 +618,12 @@ impl ChatServer {
     /// `sender: Sender<Packet>` - the sender channel of the node to add
     fn handle_add_sender_command(&mut self, node_id: NodeId, sender: Sender<Packet>) {
 
-        self.log(format!("Adding node [{}] to neighbours", node_id).as_str(), INFO);
+        self.logger.log(format!("Adding node [{}] to neighbours", node_id).as_str(), INFO);
 
         // Check that the node is not present among neighbours
         if self.node_senders.contains_key(&node_id) {
             // TODO Should this be INFO or ERROR level?
-            self.log(format!("Node [{}], already found among neighbours", node_id).as_str(), ERROR);
+            self.logger.log(format!("Node [{}], already found among neighbours", node_id).as_str(), ERROR);
             return;
         }
 
@@ -651,7 +645,7 @@ impl ChatServer {
             self.node_senders.remove(&node_id);
             self.topology.remove_edges(self.id, node_id);
 
-            self.log(
+            self.logger.log(
                 format!(
                     "Node with id [{}] successfully removed from neighbours",
                     node_id
@@ -659,7 +653,7 @@ impl ChatServer {
                 INFO
             );
         } else {
-            self.log(
+            self.logger.log(
                 format!(
                     "No node with id [{}] found among neighbours, doing nothing",
                     node_id
@@ -673,7 +667,7 @@ impl ChatServer {
     /// topology
     fn handle_topology_command(&mut self) {
 
-        self.log("Sending current topology to Simulation Controller", INFO);
+        self.logger.log("Sending current topology to Simulation Controller", INFO);
 
         let response = SimControllerResponseWrapper::Message(
             SimControllerMessage::TopologyResponse(self.topology.clone())
@@ -682,10 +676,10 @@ impl ChatServer {
         match self.sim_controller_send.send(response) {
 
             Ok(_) => {
-                self.log("Topology successfully delivered to Simulation Controller", DEBUG);
+                self.logger.log("Topology successfully delivered to Simulation Controller", DEBUG);
             }
             Err(e) => {
-                self.log(
+                self.logger.log(
                     format!(
                         "Error while sending topology to Simulation Controller - error [{:?}]",
                         e
@@ -707,7 +701,7 @@ impl ChatServer {
     /// * `session_id: u64` - the session this message belongs to
     fn send_message(&mut self, message: String, destination_node: NodeId, session_id: u64) {
 
-        self.log(
+        self.logger.log(
             format!("-> Sending a new message to node [{}]", destination_node).as_str(),
             INFO
         );
@@ -717,10 +711,10 @@ impl ChatServer {
             SimControllerResponseWrapper::Event( SimControllerEvent::MessageSent {session_id} )) {
 
             Ok(_) => {
-                self.log("MessageSent event successfully delivered to Simulation Controller", DEBUG);
+                self.logger.log("MessageSent event successfully delivered to Simulation Controller", DEBUG);
             }
             Err(e) => {
-                self.log(
+                self.logger.log(
                     format!(
                         "Error while sending MessageSent event to Simulation Controller - error [{:?}]",
                         e
@@ -740,7 +734,7 @@ impl ChatServer {
 
         // If no route was found, then add the fragments to resend later, and start a new flood
         if header.is_empty() {
-            self.log(
+            self.logger.log(
                 format!(
                     "Trying to send a message to node [{}], but no route was found, starting new flood",
                     destination_node
@@ -771,7 +765,7 @@ impl ChatServer {
             }
             self.start_flooding();
         } else {
-            self.log(
+            self.logger.log(
                 format!(
                     "New header created - [Destination: {}, Route: {:?}]",
                     destination_node,
@@ -795,7 +789,7 @@ impl ChatServer {
     /// * `packet: Packet` - the packet to send along the network
     fn send_packet(&mut self, packet: Packet) {
 
-        self.log(
+        self.logger.log(
             format!("-> Sending a new packet with session [{}]", packet.session_id).as_str(),
             INFO
         );
@@ -805,7 +799,7 @@ impl ChatServer {
 
         // If packet has empty route, abort
         if packet.routing_header.hops.is_empty() {
-            self.log("Packet has an empty route, abort sending!", ERROR);
+            self.logger.log("Packet has an empty route, abort sending!", ERROR);
             return
         }
 
@@ -826,7 +820,7 @@ impl ChatServer {
                 match node.send(packet) {
 
                     Ok(_) => {
-                        self.log(
+                        self.logger.log(
                             format!(
                                 "-> Packet with session [{}] sent correctly to node [{}]",
                                 session_id,
@@ -837,7 +831,7 @@ impl ChatServer {
                     }
 
                     Err(e) => {
-                        self.log(
+                        self.logger.log(
                             format!(
                                 "An error occurred while sending a packet - [Session Id: {}, Error: {}]",
                                 session_id,
@@ -849,7 +843,7 @@ impl ChatServer {
                 }
             }
 
-            None => { self.log(format!("No node found with id [{}]", node_id).as_str(), ERROR); }
+            None => { self.logger.log(format!("No node found with id [{}]", node_id).as_str(), ERROR); }
         }
     }
 
@@ -869,7 +863,7 @@ impl ChatServer {
         fallback_route: Vec<NodeId>
     ) {
 
-        self.log(
+        self.logger.log(
             format!(
                 "-> Sending an ACK to node [{}] for fragment [{}]",
                 destination_node,
@@ -885,11 +879,11 @@ impl ChatServer {
 
         // If no route was computed, use the fallback one
         if routing_header.is_empty() {
-            self.log("No route computed, using fallback one", DEBUG);
+            self.logger.log("No route computed, using fallback one", DEBUG);
             routing_header.hops = fallback_route;
         }
 
-        self.log(
+        self.logger.log(
             format!(
                 "New header created - [Destination: {}, Route: {:?}]",
                 destination_node,
@@ -908,11 +902,11 @@ impl ChatServer {
 
         // Check if server is waiting on an old flood
         if !self.can_flood() {
-            self.log("Server is already waiting on a flood", INFO);
+            self.logger.log("Server is already waiting on a flood", INFO);
             return;
         }
 
-        self.log("Starting a new flooding", INFO);
+        self.logger.log("Starting a new flooding", INFO);
 
         // Send event to Simulation Controller that a new flood has begun
         match self
@@ -920,10 +914,10 @@ impl ChatServer {
             .send(SimControllerResponseWrapper::Event(SimControllerEvent::FloodRequestSent)) {
 
             Ok(_) => {
-                self.log("FloodRequestSent event successfully delivered to Simulation Controller", DEBUG);
+                self.logger.log("FloodRequestSent event successfully delivered to Simulation Controller", DEBUG);
             }
             Err(e) => {
-                self.log(
+                self.logger.log(
                     format!(
                         "Error while sending FloodRequestSent event to Simulation Controller - error [{:?}]",
                         e
@@ -948,7 +942,7 @@ impl ChatServer {
         for (id, sender) in self.node_senders.clone() {
             match sender.send(flood_request.clone()) {
                 Ok(_) => {
-                    self.log(
+                    self.logger.log(
                       format!("Flood request correctly sent to node [{}]", id).as_str(),
                       DEBUG
                     );
@@ -956,7 +950,7 @@ impl ChatServer {
                     self.last_flood_timestamp = Utc::now().timestamp_millis();
                 }
                 Err(e) => {
-                    self.log(
+                    self.logger.log(
                         format!(
                             "Error while sending flood request to node [{}] - error [{}]",
                             id,
@@ -972,11 +966,11 @@ impl ChatServer {
     /// Method that try to resend each fragment in the fragment_retry_queue
     fn resend_fragments(&mut self) {
 
-        self.log("Resending fragments in the fragment_retry_queue", DEBUG);
+        self.logger.log("Resending fragments in the fragment_retry_queue", DEBUG);
 
         for (session_id, fragment_id) in self.fragment_retry_queue.clone() {
 
-            self.log(
+            self.logger.log(
                 format!("Handling fragment: [session: {} - fragment: {}]",
                         session_id,
                         fragment_id
@@ -1001,7 +995,7 @@ impl ChatServer {
                     // the packet should avoid the previous error
                     let destination_id = packet.routing_header.destination();
                     if destination_id.is_none() {
-                        self.log(
+                        self.logger.log(
                             format!(
                                 "No destination found for the fragment [{}] in session [{}]",
                                 fragment_id,
@@ -1017,7 +1011,7 @@ impl ChatServer {
                         destination_id.unwrap()
                     );
                     if source_header.is_empty() {
-                        self.log(
+                        self.logger.log(
                             format!(
                                 "No route was computed to destination node [{}]",
                                 destination_id.unwrap()
@@ -1033,7 +1027,7 @@ impl ChatServer {
                     let PacketType::MsgFragment(fragment) = packet.clone().pack_type
                         else {
                             // Should never reach this code
-                            self.log(
+                            self.logger.log(
                                 "Expecting MsgFragment, received wrong type in resend_fragments",
                                 ERROR
                             );
@@ -1054,7 +1048,7 @@ impl ChatServer {
                 } else {
 
                     // NO FRAGMENT FOUND
-                    self.log(
+                    self.logger.log(
                         format!("No fragment with id [{}] was found in session [{}]",
                             fragment_id,
                             session_id
@@ -1065,42 +1059,13 @@ impl ChatServer {
             } else {
 
                 // NO SESSION FOUND
-                self.log(
+                self.logger.log(
                     format!("No session with id [{}] is registered", session_id).as_str(),
                     ERROR
                 );
             }
         }
     }
-
-    /// Utility method used to cleanly log information, differentiating on three different levels
-    ///
-    /// # Args
-    /// * `log_message: &str` - the message to log
-    /// * `log_level: LogLevel` - the level of the log:
-    ///     * `INFO`: default log level, will always be printed
-    ///     * `DEBUG`: used only in debug situation, will not print if the debug flag is `false`
-    ///     * `ERROR`: will print the message to `io::stderr`
-    fn log(&self, log_message: &str, log_level: LogLevel) {
-
-        match log_level {
-            INFO => {
-                print!("LEVEL: INFO >>> [Chat Server {}] - ", self.id);
-                println!("{}", log_message);
-            }
-            DEBUG => {
-                if self.debug {
-                    print!("LEVEL: DEBUG >>> [Chat Server {}] - ", self.id);
-                    println!("{}", log_message);
-                }
-            }
-            ERROR => {
-                eprint!("LEVEL: ERROR >>> [Chat Server {}] - ", self.id);
-                eprintln!("{}", log_message);
-            }
-        }
-    }
-
 
     /// Run the server, listening for incoming commands from the simulation controller or incoming
     /// packets from the adjacent drones
