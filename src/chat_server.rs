@@ -818,14 +818,28 @@ impl ChatServer {
                         );
 
                         // If packet sent correctly notify Simulation Controller
-                        self.sim_controller_send.send(
+                        match self.sim_controller_send.send(
                             SimControllerResponseWrapper::Event(
                                 SimControllerEvent::PacketSent {
                                     session_id,
                                     packet_type: packet_type.to_string()
                                 }
                             )
-                        ).unwrap()
+                        ) {
+
+                            Ok(_) => {
+                                self.log("PacketSent event successfully delivered to Simulation Controller", DEBUG);
+                            }
+                            Err(e) => {
+                                self.log(
+                                    format!(
+                                        "Error while sending PacketSent event to Simulation Controller - error [{:?}]",
+                                        e
+                                    ).as_str(),
+                                    ERROR
+                                );
+                            }
+                        }
                     }
 
                     Err(e) => {
@@ -905,6 +919,25 @@ impl ChatServer {
         }
 
         self.log("Starting a new flooding", INFO);
+
+        // Send event to Simulation Controller that a new flood has begun
+        match self
+            .sim_controller_send
+            .send(SimControllerResponseWrapper::Event(SimControllerEvent::FloodRequestSent)) {
+
+            Ok(_) => {
+                self.log("FloodRequestSent event successfully delivered to Simulation Controller", DEBUG);
+            }
+            Err(e) => {
+                self.log(
+                    format!(
+                        "Error while sending FloodRequestSent event to Simulation Controller - error [{:?}]",
+                        e
+                    ).as_str(),
+                    ERROR
+                );
+            }
+        }
 
         let mut rng = rand::thread_rng();
         // Generate new random flood_id and set it as the current id in the server
@@ -1155,3 +1188,5 @@ impl ChatServer {
     }
     pub fn get_pdr_for_node(&mut self, node_id: NodeId) -> u64 {self.topology.pdr_for_node(node_id)}
 }
+
+// invia flood-request event
