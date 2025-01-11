@@ -378,6 +378,8 @@ pub mod ack_nack_tests {
 
         // <== SERVER START FLOOD AND AWAIT A RESPONSE ==>
 
+        assert!(!server.topology().nodes().contains(&7));
+
         // Check the server has started a new flood
         assert!(!server.can_flood());
 
