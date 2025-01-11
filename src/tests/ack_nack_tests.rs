@@ -516,8 +516,9 @@ pub mod ack_nack_tests {
         // Check the server has not started a new flood
         assert!(server.can_flood());
 
-        // Check that the history of the node 3 is updates, pdr should now be 1
-        assert_eq!(100, server.get_pdr_for_node(3));
+        // Check that the history of the node 3 is updates, pdr should now be 50% since
+        // it has now sent 2 packets and dropped 1
+        assert_eq!(50, server.get_pdr_for_node(3));
 
         while let Ok(response) = recv3.try_recv() {
 

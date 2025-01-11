@@ -264,8 +264,93 @@ impl ChatServer {
         // Avoid starting a new flood if the packet has been dropped,
         if nack_type == NackType::Dropped {
             self.topology.update_node_history(&vec![sender_id], true);
-            self.send_packet(packet);
-            return;
+
+            // Fetch information regarding the fragment from the server
+            // If there are fragments for the current session
+            if let Some(fragments) = self.fragment_sent.get_mut(&session_id) {
+
+                if let Some(fragment) = fragments.iter().find(|&packet| {
+                    match &packet.pack_type {
+                        PacketType::MsgFragment(fragment) => {
+                            fragment.fragment_index == fragment_id
+                        }
+                        _ => false
+                    }
+                }) {
+
+                    // Compute new route, this way if a flood response has updated the topology
+                    // the packet should avoid the previous error
+                    let destination_id = fragment.routing_header.destination();
+                    if destination_id.is_none() {
+                        self.logger.log(
+                            format!(
+                                "No destination found for the fragment [{}] in session [{}]",
+                                fragment_id,
+                                session_id
+                            ).as_str(),
+                            ERROR
+                        );
+                        return;
+                    }
+
+                    let source_header = self.topology.get_routing_header(
+                        self.id,
+                        destination_id.unwrap()
+                    );
+                    if source_header.is_empty() {
+                        self.logger.log(
+                            format!(
+                                "No route was computed to destination node [{}]",
+                                destination_id.unwrap()
+                            ).as_str(),
+                            ERROR
+                        );
+
+                        self.start_flooding();
+                        return;
+                    }
+
+                    // Fetch the fragment from the packet
+                    let PacketType::MsgFragment(new_fragment) = fragment.clone().pack_type
+                    else {
+                        // Should never reach this code
+                        self.logger.log(
+                            "Expecting MsgFragment, received wrong type in resend_fragments",
+                            ERROR
+                        );
+                        return;
+                    };
+
+                    // Create a new packet and send it
+                    let new_packet = Packet::new_fragment(
+                        source_header,
+                        session_id,
+                        new_fragment
+                    );
+
+                    self.send_packet(new_packet);
+                    return;
+                } else {
+
+                    // NO FRAGMENT FOUND
+                    self.logger.log(
+                        format!("No fragment with id [{}] was found in session [{}]",
+                                fragment_id,
+                                session_id
+                        ).as_str(),
+                        ERROR
+                    );
+                    return;
+                }
+            } else {
+
+                // NO SESSION FOUND
+                self.logger.log(
+                    format!("No session with id [{}] is registered", session_id).as_str(),
+                    ERROR
+                );
+                return;
+            }
         }
 
         // Add tuple to list in order to retry and send the fragment
@@ -1147,5 +1232,3 @@ impl ChatServer {
     }
     pub fn get_pdr_for_node(&mut self, node_id: NodeId) -> u64 {self.topology.pdr_for_node(node_id)}
 }
-
-// invia flood-request event
