@@ -489,8 +489,10 @@ impl ChatServer {
                 self.logger.log(format!("New node [{}] added to the list", node.0).as_str(), DEBUG);
                 self.topology.add_node(node.0);
 
-                if node.1 == NodeType::Drone {
-                    self.topology.set_node_type(node.0, "drone".to_string());
+                match node.1 {
+                    NodeType::Client => { self.topology.set_node_type(node.0, "client".to_string()); }
+                    NodeType::Drone => { self.topology.set_node_type(node.0, "drone".to_string()); }
+                    NodeType::Server => { self.topology.set_node_type(node.0, "server".to_string()); }
                 }
             }
 
@@ -1205,8 +1207,11 @@ impl ChatServer {
         for node in nodes {
             if !self.topology.nodes().contains(&node.0) {
                 self.topology.add_node(node.0);
-                if node.1 == NodeType::Drone {
-                    self.topology.set_node_type(node.0, "drone".to_string());
+
+                match node.1 {
+                    NodeType::Client => { self.topology.set_node_type(node.0, "client".to_string()); }
+                    NodeType::Drone => { self.topology.set_node_type(node.0, "drone".to_string()); }
+                    NodeType::Server => { self.topology.set_node_type(node.0, "server".to_string()); }
                 }
             }
         }
