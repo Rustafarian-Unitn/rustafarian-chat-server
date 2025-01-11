@@ -12,7 +12,7 @@ pub mod flooding_tests {
     use rustafarian_shared::messages::general_messages::{DroneSend, ServerTypeRequest};
     use rustafarian_shared::TIMEOUT_BETWEEN_FLOODS_MS;
     use wg_2024::network::{NodeId, SourceRoutingHeader};
-    use wg_2024::packet::{FloodRequest, FloodResponse, Packet, PacketType};
+    use wg_2024::packet::{FloodRequest, FloodResponse, NodeType, Packet, PacketType};
     use wg_2024::packet::NodeType::{Client, Drone, Server};
     use crate::chat_server::ChatServer;
 
@@ -205,7 +205,10 @@ pub mod flooding_tests {
         let session_id: u64 = rng.gen();
 
         // Add fake nodes to the topology
-        server.update_topology(vec![7, 8], vec![(3, 7)]);
+        server.update_topology(
+            vec![(7, Drone), (8, Drone)],
+            vec![(3, 7)]
+        );
 
 
         // Create a mock request, from a client which is not connected, to start a new flood

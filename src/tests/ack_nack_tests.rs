@@ -13,7 +13,7 @@ pub mod ack_nack_tests {
     use rustafarian_shared::messages::general_messages::{DroneSend, ServerTypeRequest};
     use rustafarian_shared::TIMEOUT_BETWEEN_FLOODS_MS;
     use wg_2024::network::{NodeId, SourceRoutingHeader};
-    use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, Nack, NackType, Packet, PacketType};
+    use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, Nack, NackType, NodeType, Packet, PacketType};
     use wg_2024::packet::NodeType::{Client, Drone, Server};
     use crate::chat_server::ChatServer;
 
@@ -48,7 +48,10 @@ pub mod ack_nack_tests {
             true
         );
 
-        server.update_topology(vec![1, 2, 3], vec![(1, 2), (1, 3)]);
+        server.update_topology(
+            vec![(1, NodeType::Server), (2, NodeType::Drone), (3, NodeType::Drone)],
+            vec![(1, 2), (1, 3)]
+        );
 
         (server, node_2.1, node_3.1, sim_controller_resp.1)
     }
@@ -65,7 +68,10 @@ pub mod ack_nack_tests {
         let session_id: u64 = rng.gen();
 
         // Add fake nodes to the topology
-        server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
+        server.update_topology(
+            vec![(7, NodeType::Drone), (8, NodeType::Drone)],
+            vec![(3, 7), (7, 8)]
+        );
 
         // Create a mock request, using ServerType so the server sends a response back to the client
         let mut disassembler = Disassembler::new();
@@ -121,7 +127,10 @@ pub mod ack_nack_tests {
         ) = init_test_network();
 
         // Add fake nodes to the topology
-        server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
+        server.update_topology(
+            vec![(7, NodeType::Drone), (8, NodeType::Drone)],
+            vec![(3, 7), (7, 8)]
+        );
         let mut disassembler = Disassembler::new();
 
         // Create a mock routing header for the packet, coming from the node 8
@@ -203,7 +212,10 @@ pub mod ack_nack_tests {
         let session_id: u64 = 12345;
 
         // Add fake nodes to the topology
-        server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
+        server.update_topology(
+            vec![(7, NodeType::Drone), (8, NodeType::Drone)],
+            vec![(3, 7), (7, 8)]
+        );
 
         // Create a mock request, using ServerType so the server sends a response back to the client
         let mut disassembler = Disassembler::new();
@@ -254,7 +266,10 @@ pub mod ack_nack_tests {
         let session_id: u64 = rng.gen();
 
         // Add fake nodes to the topology
-        server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
+        server.update_topology(
+            vec![(7, NodeType::Drone), (8, NodeType::Drone)],
+            vec![(3, 7), (7, 8)]
+        );
 
         // Create a mock request, using ServerType so the server sends a response back to the client
         let mut disassembler = Disassembler::new();
@@ -299,7 +314,10 @@ pub mod ack_nack_tests {
         let session_id: u64 = rng.gen();
 
         // Add fake nodes to the topology
-        server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
+        server.update_topology(
+            vec![(7, NodeType::Drone), (8, NodeType::Drone)],
+            vec![(3, 7), (7, 8)]
+        );
 
         // <== SEND A MESSAGE TO THE SERVER ==>
 
@@ -455,7 +473,10 @@ pub mod ack_nack_tests {
         let session_id: u64 = rng.gen();
 
         // Add fake nodes to the topology
-        server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
+        server.update_topology(
+            vec![(7, NodeType::Drone), (8, NodeType::Drone)],
+            vec![(3, 7), (7, 8)]
+        );
 
         // Create a mock request, using ServerType so the server sends a response back to the client
         let mut disassembler = Disassembler::new();

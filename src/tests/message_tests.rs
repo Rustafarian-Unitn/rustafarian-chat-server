@@ -10,7 +10,7 @@ pub mod message_test {
     use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerResponseWrapper};
     use rustafarian_shared::messages::general_messages::{DroneSend, ServerTypeRequest};
     use wg_2024::network::{NodeId, SourceRoutingHeader};
-    use wg_2024::packet::{Fragment, Packet, PacketType};
+    use wg_2024::packet::{Fragment, NodeType, Packet, PacketType};
     use crate::chat_server::ChatServer;
 
     fn init_test_network() -> (
@@ -44,7 +44,10 @@ pub mod message_test {
             true
         );
 
-        server.update_topology(vec![1, 2, 3], vec![(1, 2), (1, 3)]);
+        server.update_topology(
+            vec![(1, NodeType::Server), (2, NodeType::Drone), (3, NodeType::Drone)],
+            vec![(1, 2), (1, 3)]
+        );
 
         (server, node_2.1, node_3.1, sim_controller_resp.1)
     }
@@ -57,7 +60,10 @@ pub mod message_test {
         let session_id: u64 = rng.gen();
 
         // Add fake nodes to the topology
-        server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
+        server.update_topology(
+            vec![(7, NodeType::Drone), (8, NodeType::Drone)],
+            vec![(3, 7), (7, 8)]
+        );
 
         // Create a mock fragment with a test content
         let fragment_index = 1;
@@ -112,7 +118,10 @@ pub mod message_test {
         let session_id: u64 = rng.gen();
 
         // Add fake nodes to the topology
-        server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
+        server.update_topology(
+            vec![(7, NodeType::Drone), (8, NodeType::Drone)],
+            vec![(3, 7), (7, 8)]
+        );
 
         // Create a mock request and fragment it
         let mut disassembler = Disassembler::new();
@@ -201,7 +210,10 @@ pub mod message_test {
         let session_id: u64 = rng.gen();
 
         // Add fake nodes to the topology
-        server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
+        server.update_topology(
+            vec![(7, NodeType::Drone), (8, NodeType::Drone)],
+            vec![(3, 7), (7, 8)]
+        );
 
         // Create a mock request and fragment it
         let mut disassembler = Disassembler::new();
@@ -283,7 +295,10 @@ pub mod message_test {
         let session_id: u64 = rng.gen();
 
         // Add fake nodes to the topology
-        server.update_topology(vec![7, 8], vec![(3, 7), (7, 8)]);
+        server.update_topology(
+            vec![(7, NodeType::Drone), (8, NodeType::Drone)],
+            vec![(3, 7), (7, 8)]
+        );
 
         // Create a mock request and fragment it
         let mut disassembler = Disassembler::new();
@@ -390,7 +405,10 @@ pub mod message_test {
         let session_id: u64 = rng.gen();
 
         // Add fake nodes to the topology, 8 and 9 are clients
-        server.update_topology(vec![6, 7, 8, 9], vec![(3, 6), (3, 7), (6, 8), (7, 9)]);
+        server.update_topology(
+            vec![(6, NodeType::Drone), (7, NodeType::Drone), (8, NodeType::Client), (9, NodeType::Client)],
+            vec![(3, 6), (3, 7), (6, 8), (7, 9)]
+        );
 
         // Create a mock request and fragment it
         let mut disassembler = Disassembler::new();

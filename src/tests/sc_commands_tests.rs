@@ -6,7 +6,7 @@ pub mod sc_command_tests {
     use rand::{Rng};
     use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerMessage, SimControllerResponseWrapper};
     use wg_2024::network::{NodeId, SourceRoutingHeader};
-    use wg_2024::packet::{FloodRequest, FloodResponse, Packet, PacketType};
+    use wg_2024::packet::{FloodRequest, FloodResponse, NodeType, Packet, PacketType};
     use wg_2024::packet::NodeType::{Client, Drone, Server};
     use crate::chat_server::ChatServer;
 
@@ -42,7 +42,7 @@ pub mod sc_command_tests {
 
         let (mut server, _) = init_test_network();
         // Add himself to the topology, this is normally done in the .run method
-        server.update_topology(vec![1], vec![]);
+        server.update_topology(vec![(1, NodeType::Server)], vec![]);
 
         let node_id: NodeId = 3;
         let node3_channel: (Sender<Packet>, Receiver<Packet>) = unbounded();
@@ -69,7 +69,7 @@ pub mod sc_command_tests {
 
         let (mut server, _) = init_test_network();
         // Add himself to the topology, this is normally done in the .run method
-        server.update_topology(vec![1], vec![]);
+        server.update_topology(vec![(1, NodeType::Server)], vec![]);
 
         // Add a neighbour
         let node_id: NodeId = 3;
@@ -102,7 +102,7 @@ pub mod sc_command_tests {
 
         let (mut server, sc_recv) = init_test_network();
         // Add himself to the topology, this is normally done in the .run method
-        server.update_topology(vec![1], vec![]);
+        server.update_topology(vec![(1, NodeType::Server)], vec![]);
 
         // Add a neighbour
         let node_id: NodeId = 3;

@@ -488,6 +488,10 @@ impl ChatServer {
             if !self.topology.nodes().contains(&node.0) {
                 self.logger.log(format!("New node [{}] added to the list", node.0).as_str(), DEBUG);
                 self.topology.add_node(node.0);
+
+                if node.1 == NodeType::Drone {
+                    self.topology.set_node_type(node.0, "Drone".to_string());
+                }
             }
 
             // Skip the first node to avoid edge cases
@@ -721,7 +725,7 @@ impl ChatServer {
 
         self.node_senders.insert(node_id, sender);
         // Update the topology adding the current node, and an edge between the server and node
-        self.update_topology(vec![node_id], vec![(self.id, node_id)]);
+        self.update_topology(vec![(node_id, NodeType::Drone)], vec![(self.id, node_id)]);
 
         self.start_flooding();
     }
@@ -1192,14 +1196,19 @@ impl ChatServer {
     /// adding the `nodes` and `edges`
     ///
     /// # Args
-    /// * `nodes: Vec<NodeId>` - vector of nodes to add to the topology
+    /// * `nodes: Vec<(NodeId, NodeType)>` - vector of nodes to add to the topology and their type
     /// * `edges: Vec<(NodeId, NodeId)>` - vector of edges to add to the topology,
     /// both from the first node to the second and vice versa
-    pub fn update_topology(&mut self, nodes: Vec<NodeId>, edges: Vec<(NodeId, NodeId)>) {
+    pub fn update_topology(&mut self, nodes: Vec<(NodeId, NodeType)>, edges: Vec<(NodeId, NodeId)>) {
 
         // Ad node to node list if not there
         for node in nodes {
-            if !self.topology.nodes().contains(&node) { self.topology.add_node(node); }
+            if !self.topology.nodes().contains(&node.0) {
+                self.topology.add_node(node.0);
+                if node.1 == NodeType::Drone {
+                    self.topology.set_node_type(node.0, "Drone".to_string());
+                }
+            }
         }
 
         // Add edges between the two nodes, if not exists
