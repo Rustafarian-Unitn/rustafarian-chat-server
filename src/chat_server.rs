@@ -490,7 +490,7 @@ impl ChatServer {
                 self.topology.add_node(node.0);
 
                 if node.1 == NodeType::Drone {
-                    self.topology.set_node_type(node.0, "Drone".to_string());
+                    self.topology.set_node_type(node.0, "drone".to_string());
                 }
             }
 
@@ -1206,7 +1206,7 @@ impl ChatServer {
             if !self.topology.nodes().contains(&node.0) {
                 self.topology.add_node(node.0);
                 if node.1 == NodeType::Drone {
-                    self.topology.set_node_type(node.0, "Drone".to_string());
+                    self.topology.set_node_type(node.0, "drone".to_string());
                 }
             }
         }
