@@ -1,17 +1,18 @@
 #[cfg(test)]
 #[allow(unused_imports, unreachable_code, unused_variables)]
 pub mod sc_command_tests {
-    use std::collections::HashMap;
-    use crossbeam_channel::{unbounded, Receiver, Sender};
-    use rand::{Rng};
-    use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerMessage, SimControllerResponseWrapper};
-    use wg_2024::network::{NodeId, SourceRoutingHeader};
-    use wg_2024::packet::{FloodRequest, FloodResponse, NodeType, Packet, PacketType};
-    use wg_2024::packet::NodeType::{Client, Drone, Server};
     use crate::chat_server::ChatServer;
+    use crossbeam_channel::{unbounded, Receiver, Sender};
+    use rand::Rng;
+    use rustafarian_shared::messages::commander_messages::{
+        SimControllerCommand, SimControllerMessage, SimControllerResponseWrapper,
+    };
+    use std::collections::HashMap;
+    use wg_2024::network::{NodeId, SourceRoutingHeader};
+    use wg_2024::packet::NodeType::{Client, Drone, Server};
+    use wg_2024::packet::{FloodRequest, FloodResponse, NodeType, Packet, PacketType};
 
     fn init_test_network() -> (ChatServer, Receiver<SimControllerResponseWrapper>) {
-
         // NEIGHBOURS CHANNELS
         let node_2: (Sender<Packet>, Receiver<Packet>) = unbounded();
 
@@ -19,8 +20,12 @@ pub mod sc_command_tests {
         neighbours_map.insert(2 as NodeId, node_2.0);
 
         // SIM CONTROLLER CHANNELS
-        let sim_controller_resp: (Sender<SimControllerResponseWrapper>, Receiver<SimControllerResponseWrapper>) = unbounded();
-        let sim_controller_recv: (Sender<SimControllerCommand>, Receiver<SimControllerCommand>) = unbounded();
+        let sim_controller_resp: (
+            Sender<SimControllerResponseWrapper>,
+            Receiver<SimControllerResponseWrapper>,
+        ) = unbounded();
+        let sim_controller_recv: (Sender<SimControllerCommand>, Receiver<SimControllerCommand>) =
+            unbounded();
 
         // SERVER CHANNELS
         let server_channel: (Sender<Packet>, Receiver<Packet>) = unbounded();
@@ -31,7 +36,7 @@ pub mod sc_command_tests {
             sim_controller_resp.0,
             server_channel.1,
             neighbours_map,
-            true
+            true,
         );
 
         (server, sim_controller_resp.1)
@@ -39,7 +44,6 @@ pub mod sc_command_tests {
 
     #[test]
     fn should_handle_add_sender_command() {
-
         let (mut server, _) = init_test_network();
         // Add himself to the topology, this is normally done in the .run method
         server.update_topology(vec![(1, NodeType::Server)], vec![]);
@@ -66,7 +70,6 @@ pub mod sc_command_tests {
 
     #[test]
     fn should_handle_remove_sender_command() {
-
         let (mut server, _) = init_test_network();
         // Add himself to the topology, this is normally done in the .run method
         server.update_topology(vec![(1, NodeType::Server)], vec![]);
@@ -99,7 +102,6 @@ pub mod sc_command_tests {
 
     #[test]
     fn should_handle_topology_command() {
-
         let (mut server, sc_recv) = init_test_network();
         // Add himself to the topology, this is normally done in the .run method
         server.update_topology(vec![(1, NodeType::Server)], vec![]);

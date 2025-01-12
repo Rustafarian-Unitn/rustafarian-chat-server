@@ -1,29 +1,34 @@
 #[cfg(test)]
 #[allow(unused_imports, unreachable_code, unused_variables)]
 pub mod ack_nack_tests {
+    use crate::chat_server::ChatServer;
+    use crossbeam_channel::{unbounded, Receiver, Sender};
+    use rand::Rng;
+    use rustafarian_shared::assembler::assembler::Assembler;
+    use rustafarian_shared::assembler::disassembler::Disassembler;
+    use rustafarian_shared::messages::chat_messages::{
+        ChatRequest, ChatRequestWrapper, ChatResponse, ChatResponseWrapper,
+    };
+    use rustafarian_shared::messages::commander_messages::{
+        SimControllerCommand, SimControllerEvent, SimControllerResponseWrapper,
+    };
+    use rustafarian_shared::messages::general_messages::{DroneSend, ServerTypeRequest};
+    use rustafarian_shared::TIMEOUT_BETWEEN_FLOODS_MS;
     use std::collections::HashMap;
     use std::thread::sleep;
     use std::time::Duration;
-    use crossbeam_channel::{unbounded, Receiver, Sender};
-    use rand::{Rng};
-    use rustafarian_shared::assembler::assembler::Assembler;
-    use rustafarian_shared::assembler::disassembler::Disassembler;
-    use rustafarian_shared::messages::chat_messages::{ChatRequest, ChatRequestWrapper, ChatResponse, ChatResponseWrapper};
-    use rustafarian_shared::messages::commander_messages::{SimControllerCommand, SimControllerEvent, SimControllerResponseWrapper};
-    use rustafarian_shared::messages::general_messages::{DroneSend, ServerTypeRequest};
-    use rustafarian_shared::TIMEOUT_BETWEEN_FLOODS_MS;
     use wg_2024::network::{NodeId, SourceRoutingHeader};
-    use wg_2024::packet::{FloodRequest, FloodResponse, Fragment, Nack, NackType, NodeType, Packet, PacketType};
     use wg_2024::packet::NodeType::{Client, Drone, Server};
-    use crate::chat_server::ChatServer;
+    use wg_2024::packet::{
+        FloodRequest, FloodResponse, Fragment, Nack, NackType, NodeType, Packet, PacketType,
+    };
 
     fn init_test_network() -> (
         ChatServer,
         Receiver<Packet>,
         Receiver<Packet>,
-        Receiver<SimControllerResponseWrapper>
+        Receiver<SimControllerResponseWrapper>,
     ) {
-
         // NEIGHBOURS CHANNELS
         let node_2: (Sender<Packet>, Receiver<Packet>) = unbounded();
         let node_3: (Sender<Packet>, Receiver<Packet>) = unbounded();
@@ -33,7 +38,10 @@ pub mod ack_nack_tests {
         neighbours_map.insert(3 as NodeId, node_3.0);
 
         // SIM CONTROLLER CHANNELS
-        let sim_controller_resp: (Sender<SimControllerResponseWrapper>, Receiver<SimControllerResponseWrapper>) = unbounded();
+        let sim_controller_resp: (
+            Sender<SimControllerResponseWrapper>,
+            Receiver<SimControllerResponseWrapper>,
+        ) = unbounded();
         let sim_controller_recv: Receiver<SimControllerCommand> = unbounded().1;
 
         // SERVER CHANNELS
@@ -45,12 +53,16 @@ pub mod ack_nack_tests {
             sim_controller_resp.0,
             server_channel.1,
             neighbours_map,
-            true
+            true,
         );
 
         server.update_topology(
-            vec![(1, NodeType::Server), (2, NodeType::Drone), (3, NodeType::Drone)],
-            vec![(1, 2), (1, 3)]
+            vec![
+                (1, NodeType::Server),
+                (2, NodeType::Drone),
+                (3, NodeType::Drone),
+            ],
+            vec![(1, 2), (1, 3)],
         );
 
         (server, node_2.1, node_3.1, sim_controller_resp.1)
@@ -59,33 +71,23 @@ pub mod ack_nack_tests {
     #[test]
     fn should_handle_ack() {
         let mut rng = rand::thread_rng();
-        let (
-            mut server,
-            recv2,
-            recv3,
-            sc_recv
-        ) = init_test_network();
+        let (mut server, recv2, recv3, sc_recv) = init_test_network();
         let session_id: u64 = rng.gen();
 
         // Add fake nodes to the topology
         server.update_topology(
             vec![(7, NodeType::Drone), (8, NodeType::Drone)],
-            vec![(3, 7), (7, 8)]
+            vec![(3, 7), (7, 8)],
         );
 
         // Create a mock request, using ServerType so the server sends a response back to the client
         let mut disassembler = Disassembler::new();
         let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
-        let fragments = disassembler.disassemble_message(
-            request.stringify().into_bytes(),
-            session_id
-        );
+        let fragments =
+            disassembler.disassemble_message(request.stringify().into_bytes(), session_id);
 
         // Create a mock routing header for the packet, coming from the node 8
-        let routing_header = SourceRoutingHeader::new(
-            vec![8, 7, 3, 1],
-            3
-        );
+        let routing_header = SourceRoutingHeader::new(vec![8, 7, 3, 1], 3);
 
         let total_fragments = fragments.len();
 
@@ -103,11 +105,7 @@ pub mod ack_nack_tests {
 
         // Send ACK to the server for each fragment
         for fragment in fragments.clone() {
-            let ack = Packet::new_ack(
-                routing_header.clone(),
-                session_id,
-                fragment.fragment_index
-            );
+            let ack = Packet::new_ack(routing_header.clone(), session_id, fragment.fragment_index);
             server.handle_received_packet(Ok(ack));
         }
 
@@ -119,33 +117,23 @@ pub mod ack_nack_tests {
     #[test]
     fn should_handle_ack_multiple_packets() {
         let mut rng = rand::thread_rng();
-        let (
-            mut server,
-            recv2,
-            recv3,
-            sc_recv
-        ) = init_test_network();
+        let (mut server, recv2, recv3, sc_recv) = init_test_network();
 
         // Add fake nodes to the topology
         server.update_topology(
             vec![(7, NodeType::Drone), (8, NodeType::Drone)],
-            vec![(3, 7), (7, 8)]
+            vec![(3, 7), (7, 8)],
         );
         let mut disassembler = Disassembler::new();
 
         // Create a mock routing header for the packet, coming from the node 8
-        let routing_header = SourceRoutingHeader::new(
-            vec![8, 7, 3, 1],
-            3
-        );
+        let routing_header = SourceRoutingHeader::new(vec![8, 7, 3, 1], 3);
 
         // SEND FIRST MESSAGE
         let session_id_1: u64 = rng.gen();
         let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
-        let fragments_1 = disassembler.disassemble_message(
-            request.stringify().into_bytes(),
-            session_id_1
-        );
+        let fragments_1 =
+            disassembler.disassemble_message(request.stringify().into_bytes(), session_id_1);
         let total_fragments = fragments_1.len();
 
         // Send fragments to the server
@@ -157,10 +145,8 @@ pub mod ack_nack_tests {
         // SEND SECOND MESSAGE
         let session_id_2: u64 = rng.gen();
         let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
-        let fragments_2 = disassembler.disassemble_message(
-            request.stringify().into_bytes(),
-            session_id_2
-        );
+        let fragments_2 =
+            disassembler.disassemble_message(request.stringify().into_bytes(), session_id_2);
         let total_fragments = fragments_2.len();
 
         // Send fragments to the server
@@ -168,7 +154,6 @@ pub mod ack_nack_tests {
             let packet = Packet::new_fragment(routing_header.clone(), session_id_2, fragment);
             server.handle_received_packet(Ok(packet));
         }
-
 
         // Check the fragment of the response are added to the list of fragment sent
         assert!(!server.fragment_sent().is_empty());
@@ -180,7 +165,7 @@ pub mod ack_nack_tests {
             let ack = Packet::new_ack(
                 routing_header.clone(),
                 session_id_1,
-                fragment.fragment_index
+                fragment.fragment_index,
             );
             server.handle_received_packet(Ok(ack));
         }
@@ -194,7 +179,7 @@ pub mod ack_nack_tests {
             let ack = Packet::new_ack(
                 routing_header.clone(),
                 session_id_2,
-                fragment.fragment_index
+                fragment.fragment_index,
             );
             server.handle_received_packet(Ok(ack));
         }
@@ -203,33 +188,23 @@ pub mod ack_nack_tests {
 
     #[test]
     fn should_handle_ack_wrong_session_id() {
-        let (
-            mut server,
-            recv2,
-            recv3,
-            sc_recv
-        ) = init_test_network();
+        let (mut server, recv2, recv3, sc_recv) = init_test_network();
         let session_id: u64 = 12345;
 
         // Add fake nodes to the topology
         server.update_topology(
             vec![(7, NodeType::Drone), (8, NodeType::Drone)],
-            vec![(3, 7), (7, 8)]
+            vec![(3, 7), (7, 8)],
         );
 
         // Create a mock request, using ServerType so the server sends a response back to the client
         let mut disassembler = Disassembler::new();
         let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
-        let fragments = disassembler.disassemble_message(
-            request.stringify().into_bytes(),
-            session_id
-        );
+        let fragments =
+            disassembler.disassemble_message(request.stringify().into_bytes(), session_id);
 
         // Create a mock routing header for the packet, coming from the node 8
-        let routing_header = SourceRoutingHeader::new(
-            vec![8, 7, 3, 1],
-            3
-        );
+        let routing_header = SourceRoutingHeader::new(vec![8, 7, 3, 1], 3);
         let total_fragments = fragments.len();
 
         // Send fragments to the server
@@ -244,7 +219,7 @@ pub mod ack_nack_tests {
             let ack = Packet::new_ack(
                 routing_header.clone(),
                 wrong_ses_id,
-                fragment.fragment_index
+                fragment.fragment_index,
             );
             server.handle_received_packet(Ok(ack));
         }
@@ -257,33 +232,23 @@ pub mod ack_nack_tests {
     #[test]
     fn should_handle_ack_wrong_fragment_id() {
         let mut rng = rand::thread_rng();
-        let (
-            mut server,
-            recv2,
-            recv3,
-            sc_recv
-        ) = init_test_network();
+        let (mut server, recv2, recv3, sc_recv) = init_test_network();
         let session_id: u64 = rng.gen();
 
         // Add fake nodes to the topology
         server.update_topology(
             vec![(7, NodeType::Drone), (8, NodeType::Drone)],
-            vec![(3, 7), (7, 8)]
+            vec![(3, 7), (7, 8)],
         );
 
         // Create a mock request, using ServerType so the server sends a response back to the client
         let mut disassembler = Disassembler::new();
         let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
-        let fragments = disassembler.disassemble_message(
-            request.stringify().into_bytes(),
-            session_id
-        );
+        let fragments =
+            disassembler.disassemble_message(request.stringify().into_bytes(), session_id);
 
         // Create a mock routing header for the packet, coming from the node 8
-        let routing_header = SourceRoutingHeader::new(
-            vec![8, 7, 3, 1],
-            3
-        );
+        let routing_header = SourceRoutingHeader::new(vec![8, 7, 3, 1], 3);
         let total_fragments = fragments.len();
 
         // Send fragments to the server
@@ -305,18 +270,13 @@ pub mod ack_nack_tests {
     #[test]
     fn should_handle_nack() {
         let mut rng = rand::thread_rng();
-        let (
-            mut server,
-            recv2,
-            recv3,
-            sc_recv
-        ) = init_test_network();
+        let (mut server, recv2, recv3, sc_recv) = init_test_network();
         let session_id: u64 = rng.gen();
 
         // Add fake nodes to the topology
         server.update_topology(
             vec![(7, NodeType::Drone), (8, NodeType::Drone)],
-            vec![(3, 7), (7, 8)]
+            vec![(3, 7), (7, 8)],
         );
 
         // <== SEND A MESSAGE TO THE SERVER ==>
@@ -324,16 +284,11 @@ pub mod ack_nack_tests {
         // Create a mock request, using ServerType so the server sends a response back to the client
         let mut disassembler = Disassembler::new();
         let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
-        let fragments = disassembler.disassemble_message(
-            request.stringify().into_bytes(),
-            session_id
-        );
+        let fragments =
+            disassembler.disassemble_message(request.stringify().into_bytes(), session_id);
 
         // Create a mock routing header for the packet, coming from the node 8
-        let routing_header = SourceRoutingHeader::new(
-            vec![8, 7, 3, 1],
-            3
-        );
+        let routing_header = SourceRoutingHeader::new(vec![8, 7, 3, 1], 3);
 
         let total_fragments = fragments.len();
 
@@ -360,7 +315,6 @@ pub mod ack_nack_tests {
         // Add response fragments to a list and send a NACK
         let mut resp_fragments: Vec<Fragment> = Vec::new();
         while let Ok(response) = recv3.try_recv() {
-
             match response.pack_type {
                 PacketType::MsgFragment(fragment) => {
                     resp_fragments.push(fragment);
@@ -373,10 +327,10 @@ pub mod ack_nack_tests {
             let nack = Packet::new_nack(
                 routing_header.clone(),
                 session_id,
-                Nack{
+                Nack {
                     fragment_index: fragment.fragment_index,
-                    nack_type: NackType::ErrorInRouting(7)
-                }
+                    nack_type: NackType::ErrorInRouting(7),
+                },
             );
             server.handle_received_packet(Ok(nack));
         }
@@ -387,11 +341,9 @@ pub mod ack_nack_tests {
         // Check the fragment are added to the retry_later queue
         assert!(!server.fragment_retry_queue().is_empty());
         for fragment in fragments {
-            assert!(
-                server
+            assert!(server
                 .fragment_retry_queue()
-                .contains(&(session_id, fragment.fragment_index))
-            );
+                .contains(&(session_id, fragment.fragment_index)));
         }
 
         // <== SERVER START FLOOD AND AWAIT A RESPONSE ==>
@@ -431,10 +383,7 @@ pub mod ack_nack_tests {
         };
 
         // Compute the route, used to send the response back through the network
-        let mut route: Vec<u8> = flood_request.path_trace
-            .iter()
-            .map(|node| node.0)
-            .collect();
+        let mut route: Vec<u8> = flood_request.path_trace.iter().map(|node| node.0).collect();
         route.reverse();
 
         let flood_response = Packet::new_flood_response(
@@ -442,8 +391,8 @@ pub mod ack_nack_tests {
             session_id,
             FloodResponse {
                 flood_id,
-                path_trace: flood_request.path_trace
-            }
+                path_trace: flood_request.path_trace,
+            },
         );
         server.handle_received_packet(Ok(flood_response));
 
@@ -453,7 +402,12 @@ pub mod ack_nack_tests {
         assert_eq!(session_id, resend_packet.session_id);
         match resend_packet.pack_type {
             PacketType::MsgFragment(fragment) => {
-                assert_eq!(*resp_fragments.get(fragment.fragment_index as usize).unwrap(), fragment);
+                assert_eq!(
+                    *resp_fragments
+                        .get(fragment.fragment_index as usize)
+                        .unwrap(),
+                    fragment
+                );
             }
             _ => {
                 panic!("Was expecting MsgFragment as packet type")
@@ -464,33 +418,23 @@ pub mod ack_nack_tests {
     #[test]
     fn should_handle_nack_on_packet_dropped() {
         let mut rng = rand::thread_rng();
-        let (
-            mut server,
-            recv2,
-            recv3,
-            sc_recv
-        ) = init_test_network();
+        let (mut server, recv2, recv3, sc_recv) = init_test_network();
         let session_id: u64 = rng.gen();
 
         // Add fake nodes to the topology
         server.update_topology(
             vec![(7, NodeType::Drone), (8, NodeType::Drone)],
-            vec![(3, 7), (7, 8)]
+            vec![(3, 7), (7, 8)],
         );
 
         // Create a mock request, using ServerType so the server sends a response back to the client
         let mut disassembler = Disassembler::new();
         let request = ChatRequestWrapper::ServerType(ServerTypeRequest::ServerType);
-        let fragments = disassembler.disassemble_message(
-            request.stringify().into_bytes(),
-            session_id
-        );
+        let fragments =
+            disassembler.disassemble_message(request.stringify().into_bytes(), session_id);
 
         // Create a mock routing header for the packet, coming from the node 8
-        let routing_header = SourceRoutingHeader::new(
-            vec![8, 7, 3, 1],
-            3
-        );
+        let routing_header = SourceRoutingHeader::new(vec![8, 7, 3, 1], 3);
 
         let total_fragments = fragments.len();
 
@@ -519,15 +463,12 @@ pub mod ack_nack_tests {
         // Send NACK to the server for each fragment
         for fragment in fragments.clone() {
             let nack = Packet::new_nack(
-                SourceRoutingHeader::new(
-                    vec![3, 1],
-                    1
-                ),
+                SourceRoutingHeader::new(vec![3, 1], 1),
                 session_id,
-                Nack{
+                Nack {
                     fragment_index: fragment.fragment_index,
-                    nack_type: NackType::Dropped
-                }
+                    nack_type: NackType::Dropped,
+                },
             );
             server.handle_received_packet(Ok(nack));
         }
@@ -544,7 +485,6 @@ pub mod ack_nack_tests {
         assert_eq!(50, server.get_pdr_for_node(3));
 
         while let Ok(response) = recv3.try_recv() {
-
             // Check the packet is the right one
             assert_eq!(session_id, response.session_id);
             assert_eq!(1, response.routing_header.hops[0]);
