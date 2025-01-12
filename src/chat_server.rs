@@ -194,14 +194,14 @@ impl ChatServer {
         // Send ACK to the sender
         let mut fallback_route = packet.routing_header.hops;
         fallback_route.reverse();
-        self.send_ack(sender_id, fragment_id, session_id, fallback_route);
+        self.send_ack(sender_id, fragment_id, session_id, fallback_route.clone());
 
         // Reassemble message fragment, if a complete message is formed handle it
         if let Some(message) = self.assembler.add_fragment(fragment, session_id) {
 
             let message = String::from_utf8_lossy(&message).to_string();
             self.logger.log(format!("A complete message was formed: [{}]", message).as_str(), DEBUG);
-            self.handle_complete_message(message, session_id, sender_id);
+            self.handle_complete_message(message, session_id, sender_id, fallback_route);
         }
     }
 
@@ -537,7 +537,8 @@ impl ChatServer {
         &mut self,
         message: String,
         session_id: u64,
-        destination_node: NodeId
+        destination_node: NodeId,
+        fallback_route: Vec<NodeId>
     ) {
 
         match ChatRequestWrapper::from_string(message) {
@@ -570,7 +571,7 @@ impl ChatServer {
                                     return;
                                 }
 
-                                self.handle_register_request(node_id, session_id);
+                                self.handle_register_request(node_id, session_id, fallback_route);
                             }
                             ChatRequest::SendMessage {
                                 from: sender_id,
@@ -612,7 +613,7 @@ impl ChatServer {
         let response = ChatResponseWrapper::Chat(
             ChatResponse::ClientList(self.registered_clients.clone().into_iter().collect())
         );
-        self.send_message(response.stringify(), node_id, session_id);
+        self.send_message(response.stringify(), node_id, session_id, None);
     }
 
     /// Register a client to the server
@@ -620,7 +621,7 @@ impl ChatServer {
     /// # Args
     /// * `node_id: NodeId` - id of the client to register
     /// * `session_id: u64` - the session this message belongs to
-    fn handle_register_request(&mut self, node_id: NodeId, session_id: u64) {
+    fn handle_register_request(&mut self, node_id: NodeId, session_id: u64, fallback_route: Vec<NodeId>) {
 
         self.logger.log(format!("New client [{}] registered!", node_id).as_str(), INFO);
         self.registered_clients.insert(node_id);
@@ -629,7 +630,11 @@ impl ChatServer {
         let response = ChatResponseWrapper::Chat(
             ChatResponse::ClientRegistered
         );
-        self.send_message(response.stringify(), node_id, session_id);
+
+        self.send_message(response.stringify(), node_id, session_id, Some(fallback_route));
+
+        // Start a new flood
+        self.start_flooding();
     }
 
     /// Send a message from the sender to the receiver
@@ -676,7 +681,7 @@ impl ChatServer {
         let mut rng = rand::thread_rng();
         let new_session_id = rng.gen();
 
-        self.send_message(msg_response.stringify(), receiver_id, new_session_id);
+        self.send_message(msg_response.stringify(), receiver_id, new_session_id, None);
 
         // Sending confirmation to the sender that the message has been sent
         self.logger.log(
@@ -686,7 +691,7 @@ impl ChatServer {
         let msg_response = ChatResponseWrapper::Chat(
             ChatResponse::MessageSent
         );
-        self.send_message(msg_response.stringify(), sender_id, session_id);
+        self.send_message(msg_response.stringify(), sender_id, session_id, None);
     }
 
     /// Handle a request from a chat client to obtain this server type
@@ -702,7 +707,7 @@ impl ChatServer {
         let response = ChatResponseWrapper::ServerType(
             ServerTypeResponse::ServerType(ServerType::Chat)
         );
-        self.send_message(response.stringify(), destination_node, session_id);
+        self.send_message(response.stringify(), destination_node, session_id, None);
     }
 
 
@@ -797,7 +802,13 @@ impl ChatServer {
     /// * `message: String` - the message to be sent, still to be fragmented
     /// * `destination_node: NodeId` - the destination to send the message to
     /// * `session_id: u64` - the session this message belongs to
-    fn send_message(&mut self, message: String, destination_node: NodeId, session_id: u64) {
+    fn send_message(
+        &mut self,
+        message: String,
+        destination_node: NodeId,
+        session_id: u64,
+        route: Option<Vec<NodeId>>
+    ) {
 
         self.logger.log(
             format!("-> Sending a new message to node [{}]", destination_node).as_str(),
@@ -828,7 +839,13 @@ impl ChatServer {
 
         // Find the route to the destination node (the client that sent the request) and create
         // the common header for all the fragments
-        let header = self.topology.get_routing_header(self.id, destination_node);
+        let mut header;
+        if route.is_some() {
+            header = SourceRoutingHeader::initialize(route.unwrap());
+            header.increase_hop_index();
+        } else {
+            header = self.topology.get_routing_header(self.id, destination_node);
+        }
 
         // If no route was found, then add the fragments to resend later, and start a new flood
         if header.is_empty() {
@@ -1171,9 +1188,6 @@ impl ChatServer {
 
         // Add himself to the topology
         self.topology.add_node(self.id);
-
-        // Flood the first time
-        self.start_flooding();
 
         loop {
             select_biased! {

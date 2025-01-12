@@ -335,9 +335,17 @@ pub mod message_test {
             server.handle_received_packet(Ok(packet));
         }
 
-        // Discard the first two packets, should be ACK and Response for client registration
-        let packet = recv3.recv().unwrap();
-        let packet = recv3.recv().unwrap();
+        // Discard the first three packets, should be ACK, Response for client registration and a new
+        for _ in 0..3 {
+            let packet = recv3.recv().unwrap();
+            
+            match packet.pack_type {
+                PacketType::MsgFragment(_) => {}
+                PacketType::Ack(_) => {}
+                PacketType::FloodRequest(_) => {}
+                _ => { !panic!("Unexpected packet type, was expecting an ACK, MsgFragment or Flood"); }
+            }
+        }
 
         // Check the first packet is an ACK
         let packet = recv3.recv().unwrap();
@@ -435,8 +443,7 @@ pub mod message_test {
         }
 
         // Discard  ACK and Response for client registration
-        let packet = recv3.recv().unwrap();
-        let packet = recv3.recv().unwrap();
+        while let Ok(_) = recv3.try_recv() {}
 
         // CLIENT 9
         let request = ChatRequestWrapper::Chat(ChatRequest::Register(9));
@@ -458,9 +465,7 @@ pub mod message_test {
         }
 
         // Discard  ACK and Response for client registration
-        let packet = recv3.recv().unwrap();
-        let packet = recv3.recv().unwrap();
-
+        while let Ok(_) = recv3.try_recv() {}
 
         let message = "Test message".to_string();
         let request = ChatRequestWrapper::Chat(ChatRequest::SendMessage {
