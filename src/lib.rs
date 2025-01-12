@@ -1,3 +1,5 @@
+// Avoid clippy warning for format! function
+#[allow(clippy::cast_possible_wrap, clippy::uninlined_format_args)]
 pub mod chat_server;
 
 #[cfg(test)]

@@ -54,6 +54,7 @@ pub struct ChatServer {
 }
 
 impl ChatServer {
+    #[must_use]
     pub fn new(
         id: NodeId,
         sim_controller_recv: Receiver<SimControllerCommand>, // SIM -> SER
@@ -82,86 +83,86 @@ impl ChatServer {
 
     /// Handle incoming commands from simulation controller
     pub fn handle_controller_commands(&mut self, command: Result<SimControllerCommand, RecvError>) {
-        // Handle error while receiving command
-        if command.is_err() {
-            let log_msg = format!(
-                "Error in the reception of a command from Simulation Controller - error: [{}]",
-                command.err().unwrap()
-            );
-            self.logger.log(log_msg.as_str(), ERROR);
-            return;
-        }
-
-        self.logger
-            .log("<- Received new command from Simulation Controller", INFO);
-
-        let command = command.unwrap();
         match command {
-            SimControllerCommand::AddSender(node_id, sender) => {
-                self.logger.log("Received AddSender command from SC", DEBUG);
-                self.handle_add_sender_command(node_id, sender);
-            }
-            SimControllerCommand::RemoveSender(node_id) => {
-                self.logger.log("Received AddSender command from SC", DEBUG);
-                self.handle_remove_sender_command(node_id);
-            }
-            SimControllerCommand::Topology => {
-                self.logger.log("Received Topology command from SC", DEBUG);
-                self.handle_topology_command()
-            }
+            Ok(command) => {
+                self.logger
+                    .log("<- Received new command from Simulation Controller", INFO);
 
-            _ => {
-                self.logger.log(
-                    format!(
-                        "Received an unexpected command from Simulation Controller, skip handling.\
+                match command {
+                    SimControllerCommand::AddSender(node_id, sender) => {
+                        self.logger.log("Received AddSender command from SC", DEBUG);
+                        self.handle_add_sender_command(node_id, sender);
+                    }
+                    SimControllerCommand::RemoveSender(node_id) => {
+                        self.logger.log("Received AddSender command from SC", DEBUG);
+                        self.handle_remove_sender_command(node_id);
+                    }
+                    SimControllerCommand::Topology => {
+                        self.logger.log("Received Topology command from SC", DEBUG);
+                        self.handle_topology_command();
+                    }
+
+                    _ => {
+                        self.logger.log(
+                           format!(
+                               "Received an unexpected command from Simulation Controller, skip handling.\
                          Command: [{:?}]",
-                        command
-                    )
-                    .as_str(),
-                    ERROR,
+                               command
+                           )
+                               .as_str(),
+                           ERROR,
+                       );
+                    }
+                }
+            }
+            Err(err) => {
+                let log_msg = format!(
+                    "Error in the reception of a command from Simulation Controller - error: [{}]",
+                    err
                 );
+                self.logger.log(log_msg.as_str(), ERROR);
             }
         }
     }
 
     /// Handle incoming messages
     pub fn handle_received_packet(&mut self, packet: Result<Packet, RecvError>) {
-        // Handle error while receiving packet
-        if packet.is_err() {
-            let log_msg = format!(
-                "Error in the reception of a packet - packet error: [{}]",
-                packet.err().unwrap()
-            );
-            self.logger.log(log_msg.as_str(), ERROR);
-            return;
-        }
+        match packet {
+            Ok(packet) => {
+                self.logger.log(
+                    format!("<- Received new packet of type [{}]", packet.pack_type).as_str(),
+                    INFO,
+                );
 
-        let packet = packet.unwrap();
-        self.logger.log(
-            format!("<- Received new packet of type [{}]", packet.pack_type).as_str(),
-            INFO,
-        );
-
-        match packet.pack_type.clone() {
-            PacketType::MsgFragment(fragment) => {
-                self.logger.log("Received MsgFragment", DEBUG);
-                self.handle_message_fragment(packet, fragment)
+                match packet.pack_type.clone() {
+                    PacketType::MsgFragment(fragment) => {
+                        self.logger.log("Received MsgFragment", DEBUG);
+                        self.handle_message_fragment(packet, fragment);
+                    }
+                    PacketType::Ack(ack) => {
+                        self.logger.log("Received ACK", DEBUG);
+                        self.handle_ack(&packet, &ack);
+                    }
+                    PacketType::Nack(nack) => {
+                        self.logger.log("Received NACK", DEBUG);
+                        self.handle_nack(&packet, &nack);
+                    }
+                    PacketType::FloodRequest(flood_request) => {
+                        self.logger.log("Received FloodRequest", DEBUG);
+                        self.handle_flood_request(&packet, flood_request);
+                    }
+                    PacketType::FloodResponse(flood_response) => {
+                        self.logger.log("Received FloodResponse", DEBUG);
+                        self.handle_flood_response(packet, &flood_response);
+                    }
+                }
             }
-            PacketType::Ack(ack) => {
-                self.logger.log("Received ACK", DEBUG);
-                self.handle_ack(packet, ack);
-            }
-            PacketType::Nack(nack) => {
-                self.logger.log("Received NACK", DEBUG);
-                self.handle_nack(packet, nack)
-            }
-            PacketType::FloodRequest(flood_request) => {
-                self.logger.log("Received FloodRequest", DEBUG);
-                self.handle_flood_request(packet, flood_request);
-            }
-            PacketType::FloodResponse(flood_response) => {
-                self.logger.log("Received FloodResponse", DEBUG);
-                self.handle_flood_response(packet, flood_response);
+            Err(err) => {
+                let log_msg = format!(
+                    "Error in the reception of a packet - packet error: [{}]",
+                    err
+                );
+                self.logger.log(log_msg.as_str(), ERROR);
             }
         }
     }
@@ -173,11 +174,11 @@ impl ChatServer {
     ///
     /// # Args
     /// * `packet: Packet` - the packet containing the fragment, used to gather information like
-    /// the sender id
+    ///   the sender id
     /// * `fragment: Fragment` - the actual fragment, used to reconstruct a complete message
     fn handle_message_fragment(&mut self, packet: Packet, fragment: Fragment) {
-        let session_id = packet.session_id.clone();
-        let fragment_id = fragment.fragment_index.clone();
+        let session_id = packet.session_id;
+        let fragment_id = fragment.fragment_index;
         let sender_id = packet.routing_header.hops[0];
 
         self.logger.log(
@@ -209,10 +210,10 @@ impl ChatServer {
     ///
     /// # Args
     /// * `packet: Packet` - the packet containing the ACK, used to gather information like
-    /// the sender id
+    ///   the sender id
     /// * `ack: Ack` - the ACK containing the fragment id
-    fn handle_ack(&mut self, packet: Packet, ack: Ack) {
-        let session_id = packet.session_id.clone();
+    fn handle_ack(&mut self, packet: &Packet, ack: &Ack) {
+        let session_id = packet.session_id;
         let fragment_id = ack.fragment_index;
         let sender_id = packet.routing_header.hops[0];
 
@@ -248,10 +249,10 @@ impl ChatServer {
     ///
     /// # Args
     /// * `packet: Packet` - the packet containing the NACK, used to gather information like
-    /// the sender id
+    ///   the sender id
     /// * `nack: Nacl` - the NACK containing the fragment id
-    fn handle_nack(&mut self, packet: Packet, nack: Nack) {
-        let session_id = packet.session_id.clone();
+    fn handle_nack(&mut self, packet: &Packet, nack: &Nack) {
+        let session_id = packet.session_id;
         let fragment_id = nack.fragment_index;
         let nack_type = nack.nack_type;
         let sender_id = packet.routing_header.hops[0];
@@ -330,26 +331,24 @@ impl ChatServer {
 
                         self.send_packet(new_packet);
                         return;
-                    } else {
-                        // NO FRAGMENT FOUND
-                        self.logger.log(
-                            format!(
-                                "No fragment with id [{}] was found in session [{}]",
-                                fragment_id, session_id
-                            )
-                            .as_str(),
-                            ERROR,
-                        );
-                        return;
                     }
-                } else {
-                    // NO SESSION FOUND
+                    // NO FRAGMENT FOUND
                     self.logger.log(
-                        format!("No session with id [{}] is registered", session_id).as_str(),
+                        format!(
+                            "No fragment with id [{}] was found in session [{}]",
+                            fragment_id, session_id
+                        )
+                        .as_str(),
                         ERROR,
                     );
                     return;
                 }
+                // NO SESSION FOUND
+                self.logger.log(
+                    format!("No session with id [{}] is registered", session_id).as_str(),
+                    ERROR,
+                );
+                return;
             }
 
             // Remove the node from the topology, because it has crashed
@@ -363,18 +362,18 @@ impl ChatServer {
         self.fragment_retry_queue.insert((session_id, fragment_id));
 
         // If no flood is currently in process, start a new one to update the topology
-        self.start_flooding()
+        self.start_flooding();
     }
 
-    /// Method that handles the reception of a flood_request, currently update the path trace
+    /// Method that handles the reception of a `flood_request`, currently update the path trace
     /// and forwards it to the other neighbours
     ///
     /// # Args
     /// * `packet: Packet` - the original packet received by the server, used to get information
-    /// like session_id
-    /// * `flood_request: FloodRequest` - received flood_request, will be updated and forwarded to
-    /// neighbours
-    fn handle_flood_request(&mut self, packet: Packet, mut flood_request: FloodRequest) {
+    ///   like `session_id`
+    /// * `flood_request: FloodRequest` - received `flood_request`, will be updated and forwarded to
+    ///   neighbours
+    fn handle_flood_request(&mut self, packet: &Packet, mut flood_request: FloodRequest) {
         // CASE 1 - Forward the flood request
         // Get the node that sent the request, so to avoid sending the request back to it
         let sender_id = flood_request.path_trace.last().unwrap().0;
@@ -394,7 +393,7 @@ impl ChatServer {
         for (id, sender) in &self.node_senders {
             if *id != sender_id {
                 match sender.send(new_flood_request.clone()) {
-                    Ok(_) => {
+                    Ok(()) => {
                         self.logger.log(
                             format!("-> Flood request correctly forwarded to node [{}]", id)
                                 .as_str(),
@@ -443,9 +442,10 @@ impl ChatServer {
     ///
     /// # Args
     /// * `packet: Packet` - the original packet received by the server, used to forward the flood
-    /// response in case it does not belong to this server
+    ///   response in case it does not belong to this server
     /// * `flood_response: FloodResponse` - the flood response received by the server
-    fn handle_flood_response(&mut self, mut packet: Packet, flood_response: FloodResponse) {
+    #[allow(clippy::if_not_else)] // To me the if/else is clearer this way
+    fn handle_flood_response(&mut self, mut packet: Packet, flood_response: &FloodResponse) {
         // If the flood was not started by this server, then forward it
         let initiator = flood_response.path_trace[0].0;
         if initiator != self.id {
@@ -544,7 +544,7 @@ impl ChatServer {
     /// * `message: String` - the message received from the client
     /// * `session_id: u64` - the session of the current message
     /// * `destination_node: NodeId` - the id of the client that sent the message, used to send the
-    /// response to
+    ///   response to
     fn handle_complete_message(
         &mut self,
         message: String,
@@ -731,7 +731,7 @@ impl ChatServer {
 
     // <== SIMULATION CONTROLLER COMMAND HANDLING ==>
 
-    /// Method that handles the AddSender command from the Simulation Controller, adding the node
+    /// Method that handles the `AddSender` command from the Simulation Controller, adding the node
     /// and sender to the list of neighbours and updating the topology
     ///
     /// # Args
@@ -760,7 +760,7 @@ impl ChatServer {
         self.start_flooding();
     }
 
-    /// Method that handles the RemoveSender command from Simulation Controller, removing the node
+    /// Method that handles the `RemoveSender` command from Simulation Controller, removing the node
     /// from the list of neighbours, and updating the topology accordingly
     ///
     /// # Args
@@ -801,7 +801,7 @@ impl ChatServer {
         );
 
         match self.sim_controller_send.send(response) {
-            Ok(_) => {
+            Ok(()) => {
                 self.logger.log(
                     "Topology successfully delivered to Simulation Controller",
                     DEBUG,
@@ -828,6 +828,7 @@ impl ChatServer {
     /// * `message: String` - the message to be sent, still to be fragmented
     /// * `destination_node: NodeId` - the destination to send the message to
     /// * `session_id: u64` - the session this message belongs to
+    #[allow(clippy::needless_pass_by_value)] // This is here since the message is a String because of stringify, but clippy suggests a &str
     fn send_message(
         &mut self,
         message: String,
@@ -846,7 +847,7 @@ impl ChatServer {
             .send(SimControllerResponseWrapper::Event(
                 SimControllerEvent::MessageSent { session_id },
             )) {
-            Ok(_) => {
+            Ok(()) => {
                 self.logger.log(
                     "MessageSent event successfully delivered to Simulation Controller",
                     DEBUG,
@@ -901,7 +902,7 @@ impl ChatServer {
                 let packet = Packet::new_fragment(header, session_id, fragment);
                 self.fragment_sent
                     .entry(session_id)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(packet.clone());
             }
             self.start_flooding();
@@ -938,7 +939,7 @@ impl ChatServer {
         );
         // If the packet is a MsgFragment, then add it to the list of sent fragment
         let packet_type = packet.pack_type.clone();
-        let session_id = packet.session_id.clone();
+        let session_id = packet.session_id;
 
         // If packet has empty route, abort
         if packet.routing_header.hops.is_empty() {
@@ -950,7 +951,7 @@ impl ChatServer {
         if let PacketType::MsgFragment(_) = packet_type.clone() {
             self.fragment_sent
                 .entry(session_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(packet.clone());
 
             // Only update history if packet is MsgFragment
@@ -962,7 +963,7 @@ impl ChatServer {
         let node_id = packet.routing_header.current_hop().unwrap();
         match self.node_senders.get(&node_id) {
             Some(node) => match node.send(packet) {
-                Ok(_) => {
+                Ok(()) => {
                     self.logger.log(
                         format!(
                             "-> Packet with session [{}] sent correctly to node [{}]",
@@ -1059,7 +1060,7 @@ impl ChatServer {
             .send(SimControllerResponseWrapper::Event(
                 SimControllerEvent::FloodRequestSent,
             )) {
-            Ok(_) => {
+            Ok(()) => {
                 self.logger.log(
                     "FloodRequestSent event successfully delivered to Simulation Controller",
                     DEBUG,
@@ -1090,7 +1091,7 @@ impl ChatServer {
 
         for (id, sender) in self.node_senders.clone() {
             match sender.send(flood_request.clone()) {
-                Ok(_) => {
+                Ok(()) => {
                     self.logger.log(
                         format!("Flood request correctly sent to node [{}]", id).as_str(),
                         DEBUG,
@@ -1112,7 +1113,7 @@ impl ChatServer {
         }
     }
 
-    /// Method that try to resend each fragment in the fragment_retry_queue
+    /// Method that try to resend each fragment in the `fragment_retry_queue`
     fn resend_fragments(&mut self) {
         self.logger
             .log("Resending fragments in the fragment_retry_queue", DEBUG);
@@ -1214,7 +1215,7 @@ impl ChatServer {
             select_biased! {
                 // Handle commands from the simulation controller
                 recv(self.sim_controller_recv) -> command => {
-                    self.handle_controller_commands(command)
+                    self.handle_controller_commands(command);
                 }
 
                 // Handle packets from adjacent drones
@@ -1226,6 +1227,7 @@ impl ChatServer {
     }
 
     // <== GETTERS AND SETTERS ==>
+    #[must_use]
     pub fn topology(&self) -> &Topology {
         &self.topology
     }
@@ -1236,7 +1238,10 @@ impl ChatServer {
     /// # Args
     /// * `nodes: Vec<(NodeId, NodeType)>` - vector of nodes to add to the topology and their type
     /// * `edges: Vec<(NodeId, NodeId)>` - vector of edges to add to the topology,
-    /// both from the first node to the second and vice versa
+    ///   both from the first node to the second and vice versa
+    ///
+    /// # Panics
+    /// If the topology contains a key for a node, but the edge is `None`
     pub fn update_topology(
         &mut self,
         nodes: Vec<(NodeId, NodeType)>,
@@ -1277,31 +1282,37 @@ impl ChatServer {
         }
     }
 
+    #[must_use]
     pub fn registered_clients(&self) -> &HashSet<NodeId> {
         &self.registered_clients
     }
 
+    #[must_use]
     pub fn neighbours(&self) -> &HashMap<NodeId, Sender<Packet>> {
         &self.node_senders
     }
 
+    #[must_use]
     pub fn fragment_sent(&self) -> &HashMap<u64, Vec<Packet>> {
         &self.fragment_sent
     }
 
     /// Return true if the current timestamp is grater than
     /// the last flood starting timestamp + a shared timeout
+    #[must_use]
     pub fn can_flood(&self) -> bool {
         let now = Utc::now();
         now.timestamp_millis() > self.last_flood_timestamp + TIMEOUT_BETWEEN_FLOODS_MS as i64
     }
 
+    #[must_use]
     pub fn fragment_retry_queue(&self) -> &HashSet<(u64, u64)> {
         &self.fragment_retry_queue
     }
 
     /// Return a vector of all nodes in the topology and their correspondent PDR
     /// (for servers and clients should be 0)
+    #[must_use]
     pub fn get_pdr_for_topology(&mut self) -> Vec<(NodeId, u64)> {
         let mut pdrs = Vec::new();
 
@@ -1310,6 +1321,7 @@ impl ChatServer {
         }
         pdrs
     }
+    #[must_use]
     pub fn get_pdr_for_node(&mut self, node_id: NodeId) -> u64 {
         self.topology.pdr_for_node(node_id)
     }
