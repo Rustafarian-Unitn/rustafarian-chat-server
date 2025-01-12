@@ -633,8 +633,8 @@ impl ChatServer {
 
         self.send_message(response.stringify(), node_id, session_id, Some(fallback_route));
 
-        // Start a new flood
-        self.start_flooding();
+        // Start a new flood, only if it is the first flood
+        if self.current_flood_id == 0 { self.start_flooding(); }
     }
 
     /// Send a message from the sender to the receiver
