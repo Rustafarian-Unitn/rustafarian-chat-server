@@ -15,6 +15,7 @@ use rustafarian_shared::messages::general_messages::{DroneSend, ServerType, Serv
 use rustafarian_shared::topology::Topology;
 use rustafarian_shared::TIMEOUT_BETWEEN_FLOODS_MS;
 use std::collections::{HashMap, HashSet};
+use std::process;
 use wg_2024::network::{NodeId, SourceRoutingHeader};
 use wg_2024::packet::{
     Ack, FloodRequest, FloodResponse, Fragment, Nack, NackType, NodeType, Packet, PacketType,
@@ -101,7 +102,11 @@ impl ChatServer {
                         self.logger.log("Received Topology command from SC", DEBUG);
                         self.handle_topology_command();
                     }
-
+                    SimControllerCommand::Shutdown => {
+                        self.logger.log("Received Shutdown command from SC", DEBUG);
+                        self.logger.log("Shutting down", INFO);
+                        process::exit(0);
+                    }
                     _ => {
                         self.logger.log(
                            format!(
