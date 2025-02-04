@@ -276,6 +276,9 @@ impl ChatServer {
             NackType::Dropped => {
                 self.topology.update_node_history(&vec![sender_id], true);
 
+                // TODO REMOVE - DEBUG TEMPORARY
+                let pdrs = self.get_pdr_for_topology();
+
                 // Fetch information regarding the fragment from the server
                 // If there are fragments for the current session
                 if let Some(fragments) = self.fragment_sent.get_mut(&session_id) {
@@ -318,6 +321,16 @@ impl ChatServer {
                             self.start_flooding();
                             return;
                         }
+
+
+                        // TODO REMOVE - DEBUG TEMPORARY
+                        self.logger.log(
+                            format!("New Route: [{:?}]", source_header.hops).as_str(),
+                            DEBUG
+                        );
+                        self.logger.log(format!("PDRs: [{:?}]", pdrs).as_str(), DEBUG);
+
+
 
                         // Fetch the fragment from the packet
                         let PacketType::MsgFragment(new_fragment) = fragment.clone().pack_type
